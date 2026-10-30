@@ -31,10 +31,10 @@ export const SAY = {
     "Welcome to ChipChip B2B orders. Please share your phone number with the button below so we know your company.\n\n" +
     "እንኳን ወደ ቺፕቺፕ B2B ትዕዛዝ በደህና መጡ። ድርጅትዎን እንድናውቅ እባክዎ ከታች ባለው ቁልፍ ስልክ ቁጥርዎን ያጋሩ።",
   share_button: "Share my phone number / ስልክ ቁጥሬን አጋራ",
-  linked: (companies: string) =>
-    `Thank you. You order for: ${companies}.\nSend your order here any way you like: a list, a photo or a file.\n\n` +
-    `እናመሰግናለን። የሚያዙት ለ፦ ${companies}።\nትዕዛዝዎን እዚህ ይላኩ፦ ዝርዝር፣ ፎቶ ወይም ፋይል።`,
-  // New-customer sign-up: an unknown number answers four questions, one at a time, then Simenesh decides.
+  thanks:
+    "Thank you. Send your order here any way you like: a list, a photo or a file.\n\n" +
+    "እናመሰግናለን። ትዕዛዝዎን እዚህ ይላኩ፦ ዝርዝር፣ ፎቶ ወይም ፋይል።",
+  // New-customer sign-up, started by the agent: the intro, four questions one at a time, then Simenesh decides.
   signup_start:
     "This number is not a ChipChip business customer yet. Let's sign you up with four short questions.\n\n" +
     "ይህ ቁጥር ገና የቺፕቺፕ ድርጅት ደንበኛ አይደለም። በአራት አጭር ጥያቄዎች እንመዝግብዎት።",
@@ -74,8 +74,6 @@ export const SAY = {
     "Please share your phone number first with the button below.\n\nእባክዎ መጀመሪያ ከታች ባለው ቁልፍ ስልክ ቁጥርዎን ያጋሩ።",
   received:
     "Received ✅ We will send you the order to confirm shortly.\n\nደርሶናል ✅ ትዕዛዙን በቅርቡ እንልክልዎታለን።",
-  which_company:
-    "Which company is this order for?\n\nይህ ትዕዛዝ ለየትኛው ድርጅት ነው?",
   company_set: (name: string) => `Noted: ${name}.\n\nተመዝግቧል፦ ${name}።`,
   created: (id: number, total: string, date: string) =>
     `Your order #${id} is confirmed: ${total} ETB, delivery ${date}. Thank you!\n\n` +

@@ -10,10 +10,11 @@ only base URLs and credentials.
 - **Fake ChipChip Admin** (real: Next.js + Go API): the `/v1` and `/v2` calls the B2B screens use under `/admin-api/...`,
   and the pages **B2B Customers → Companies → a company → Linked Users / Place Order / Orders**.
 - **Order bot (Telegram)**: ours, stays at go-live. Customers' staff send an order in any form (a list, a photo, a file).
-  A person is known by phone number as a **linked user of their company in Admin**; the bot groups their messages into
-  one order and asks which company when they are linked to several. **An unknown number is signed up**: the bot asks
-  the business name, type, TIN and delivery place, keeps their order waiting, and the agent creates the customer in
-  both systems once Simenesh says yes. Page **Received** (orders and sign-ups).
+  It plays Simenesh's own Telegram and nothing more: it learns the sender's phone number, groups their messages into one
+  order and never reads Admin or B2B. **The agent** decides who the sender is (a linked user in ChipChip's staging Admin),
+  which company, and whether to sign them up; on its word the bot asks a new customer the business name, type, TIN and
+  delivery place, keeps their order waiting, and releases it once the agent has created the customer in both systems
+  after Simenesh's yes. Page **Received** (orders and sign-ups).
 - **4 questions**: Simenesh's answers, stored for the agent (`GET /api/agent/settings`). The fake systems do not change
   with them; each behaves like the real one.
 
@@ -37,7 +38,8 @@ catalogue; prices are samples.
    | `UI_PASSWORD` | the password of the pages |
 
 4. Open the site → **Received** → *Order bot connection* → **Connect the bot**.
-5. Testers: **Received** → *Add a tester* (their Telegram phone + company). They open the bot, press Start, share their number.
+5. Testers open the bot, press Start and share their number. To order for a company they must be a linked user of it in
+   ChipChip's staging Admin (Admin → B2B Customers → the company → Linked Users); anyone else is signed up.
 
 ### The agent's test accounts in the fake systems
 
@@ -134,14 +136,16 @@ override → customer type → `pricing_settings.tax_rate`) and delivery fee its
 
 | Call | What it does |
 |---|---|
-| `GET /api/agent/inbox` | Orders ready to prepare (sender quiet 90 s, company known): messages (photos/files as `file_url`, one hour), `sender {name, phone, admin_user_id}`, `company {id, business_name, tin}` from Admin. `?status=all`: the latest 30. |
+| `GET /api/agent/inbox` | Orders ready to prepare (sender quiet 90 s): `{inbox_id, status, sender {name, phone, telegram_name}, company_id, admin_user_id, messages[{kind, text, file_name, file_url, at}], ...}` (file links last one hour). `company_id` is null until the agent sets it. `?status=all`: the latest 30. |
+| `POST /api/agent/inbox/{id}/signup` | `{intro?}`: the sender is not a customer; the bot starts the sign-up (intro, then the questions) and keeps this order waiting. 409 unless the order is `collecting` or `asked`. |
 | `POST /api/agent/inbox/{id}/reply` | `{text}`: the bot asks the customer; their answer joins the same order. |
-| `POST /api/agent/inbox/{id}/status` | `{status: proposed\|rejected\|collecting\|asked\|created, note, tell_customer, b2b_order_number, admin_bill_id}`. After placing the order through the two systems' APIs, the agent sets `created` with the references and the confirmation text in `tell_customer`. |
+| `POST /api/agent/inbox/{id}/status` | `{status: proposed\|rejected\|collecting\|asked\|created, note, tell_customer, b2b_order_number, admin_bill_id, company_id, admin_user_id}` (`status` may be left out to record only the company). After placing the order through the two systems' APIs, the agent sets `created` with the references and the confirmation text in `tell_customer`. |
 | `GET /api/agent/settings` | Simenesh's answers to the four questions. |
 | `GET /api/agent/signups` | Sign-ups waiting for Simenesh: `{id, phone, telegram_name, business_name, business_type, tin, address, latitude, longitude, status, waiting_orders, ...}`. `?status=all`: the latest 30. |
 | `POST /api/agent/signups/{id}/status` | `{status: registered\|declined, note, tell_customer, b2b_customer_id, admin_company_id, admin_user_id}` (`registered` needs the last two). Registered: the person is linked in the bot and the orders they sent while waiting go to the inbox at once. 409 when it is not waiting. |
 
-**Signing up a new customer** (after Simenesh's yes), the agent:
+**Signing up a new customer**: the agent finds no linked user for the sender's phone in Admin and calls
+`POST /api/agent/inbox/{id}/signup`; once `GET /api/agent/signups` lists the answers, it asks Simenesh, and after her yes:
 1. B2B: `GET /rest/v1/customers?phone=eq.<+251…>` (or `tin_number`); if none, `POST /rest/v1/customers` with `name, email`
    (`<phone digits>@telegram-user.auto` when they gave none, as B2B's own Telegram sign-up does), `phone, customer_type_id,
    address, latitude, longitude, tin_number, is_active: true, approval_status: "approved", source: "telegram"`.
@@ -175,8 +179,6 @@ Differences to know:
   whatever payment method is picked (the real behaviour for non-wallet methods is still an open question).
 - Admin's linked-users list includes `user {name, phone}`; the real one may return only ids (the Admin page looks the
   profile up when it is missing).
-- The bot reads Admin's linked users from the mock's tables directly; at go-live it reads the real Admin.
-- "Add a tester" on **Received** is mock-only: it creates an Admin user for a real Telegram phone and links it.
 
 ## Local run
 
