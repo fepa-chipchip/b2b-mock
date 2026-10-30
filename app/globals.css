@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Colour tokens copied from ChipChip B2B (b2bchip src/index.css), light theme only, as the real dashboard is used. */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --primary: 0 77% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 222.2 84% 4.9%;
+    --radius: 0.5rem;
+    color-scheme: light;
+  }
+  * { @apply border-border; }
+  body {
+    @apply bg-gray-50 text-foreground;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    min-height: 100vh;
+  }
+}
+
+/* The few shared pieces, written once with the same classes as b2bchip's shadcn/ui components. */
+@layer components {
+  .card { @apply rounded-lg border bg-card text-card-foreground shadow-sm; }
+  .page-title { @apply text-2xl md:text-3xl font-bold tracking-tight text-gray-900; }
+  .page-sub { @apply text-gray-600 mt-1; }
+  .am { @apply text-sm font-normal text-gray-500; }
+  .btn { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium h-9 px-4 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2; }
+  .btn-outline { @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium h-9 px-3 border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors; }
+  .field { @apply h-10 rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 max-w-full; }
+  .textarea { @apply w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2; }
+  .badge { @apply inline-flex items-center rounded-full border border-transparent px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap; }
+  .tbl { @apply w-full caption-bottom text-sm; }
+  .tbl thead tr { @apply border-b; }
+  .tbl th { @apply h-10 px-4 text-left align-middle font-medium text-muted-foreground whitespace-nowrap; }
+  .tbl td { @apply p-4 align-middle; }
+  .tbl tbody tr { @apply border-b transition-colors hover:bg-gray-50; }
+  .tbl tbody tr:last-child { @apply border-0; }
+  .tbl .num { @apply text-right whitespace-nowrap; }
+  .tbl-wrap { @apply w-full overflow-x-auto; }
+  input[type="radio"], input[type="checkbox"] { accent-color: hsl(var(--primary)); }
+}

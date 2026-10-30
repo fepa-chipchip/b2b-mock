@@ -60,31 +60,41 @@ export default async function Questions() {
   const byKey = new Map(rows.map((r) => [r.key, r]));
   return (
     <>
-      <h1>4 questions <div className="am">4 ጥያቄዎች</div></h1>
-      <p className="muted">
-        Pick the answer that matches how you work. The test follows it at once: send a new order and look at the result. ·
-        እንደ ስራዎ ትክክለኛውን መልስ ይምረጡ። ሙከራው ወዲያውኑ ይከተለዋል፤ አዲስ ትዕዛዝ ልከው ውጤቱን ይመልከቱ።
-      </p>
+      <div>
+        <h2 className="page-title">4 questions</h2>
+        <div className="am">4 ጥያቄዎች</div>
+        <p className="page-sub">
+          Pick the answer that matches how you work. The test follows it at once: send a new order and look at the result. ·
+          እንደ ስራዎ ትክክለኛውን መልስ ይምረጡ። ሙከራው ወዲያውኑ ይከተለዋል፤ አዲስ ትዕዛዝ ልከው ውጤቱን ይመልከቱ።
+        </p>
+      </div>
       {QUESTIONS.map((q, n) => {
         const cur = byKey.get(q.key);
         return (
-          <div className="card" key={q.key}>
-            <h2>{n + 1}. {q.en}<div className="am">{q.am}</div></h2>
-            <div className="muted" style={{ fontSize: 14 }}>{q.why}<br />{q.why_am}</div>
-            <form action={saveAnswer} style={{ marginTop: 8 }}>
+          <div className="card p-4 md:p-6" key={q.key}>
+            <h3 className="text-lg font-semibold text-gray-900">{n + 1}. {q.en}</h3>
+            <div className="am">{q.am}</div>
+            <div className="text-sm text-gray-600 mt-2">{q.why}<br />{q.why_am}</div>
+            <form action={saveAnswer} className="mt-4 space-y-2">
               <input type="hidden" name="key" value={q.key} />
               {q.options.map(([v, en, am]) => (
-                <label key={v}><input type="radio" name="value" value={v} defaultChecked={cur?.value === v} /> {en} · <span className="am">{am}</span></label>
+                <label key={v} className="flex items-start gap-2 rounded-md border px-3 py-2 text-sm cursor-pointer hover:bg-gray-50 has-[:checked]:border-red-600 has-[:checked]:bg-red-50">
+                  <input type="radio" name="value" value={v} defaultChecked={cur?.value === v} className="mt-1" />
+                  <span>{en} · <span className="am">{am}</span></span>
+                </label>
               ))}
-              <textarea name="comment" rows={2} defaultValue={cur?.comment || ""} placeholder="Comment · አስተያየት" style={{ marginTop: 6 }} />
-              <button type="submit" style={{ marginTop: 6 }}>Save · አስቀምጥ</button>
-              {cur?.answered_by && <span className="muted" style={{ marginLeft: 8, fontSize: 13 }}>Saved {new Date(cur.updated_at).toLocaleString("en-GB", { timeZone: "Africa/Addis_Ababa" })}</span>}
+              <textarea name="comment" rows={2} defaultValue={cur?.comment || ""} placeholder="Comment · አስተያየት" className="textarea" />
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="submit" className="btn">Save · አስቀምጥ</button>
+                {cur?.answered_by && <span className="text-xs text-gray-500">Saved {new Date(cur.updated_at).toLocaleString("en-GB", { timeZone: "Africa/Addis_Ababa" })}</span>}
+              </div>
             </form>
           </div>
         );
       })}
-      <div className="card">
-        <h2>Anything else? <div className="am">ሌላ ነገር አለ?</div></h2>
+      <div className="card p-4 md:p-6">
+        <h3 className="text-lg font-semibold text-gray-900">Anything else?</h3>
+        <div className="am">ሌላ ነገር አለ?</div>
         <Feedback about="general" given={fb.filter((f) => f.about === "general")} />
       </div>
     </>
