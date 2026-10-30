@@ -8,13 +8,22 @@ const STATUS: Record<string, string> = {
   collecting: "receiving · እየደረሰ", waiting_company: "waiting for the company choice · ድርጅት እየጠበቀ",
   asked: "question sent to the customer · ጥያቄ ተልኳል", proposed: "waiting for your yes · ፈቃድዎን እየጠበቀ",
   created: "created · ተፈጥሯል", rejected: "declined · ውድቅ", unknown_sender: "unknown phone · ያልታወቀ ስልክ",
+  waiting_signup: "waiting for the sign-up · ምዝገባ እየጠበቀ",
+};
+
+/** A new customer's sign-up through the bot. */
+const SIGNUP_STATUS: Record<string, [string, string]> = {
+  collecting: ["answering · እየመለሱ", "bg-blue-100 text-blue-800"],
+  waiting_approval: ["waiting for your yes · ፈቃድዎን እየጠበቀ", "bg-amber-100 text-amber-800"],
+  registered: ["registered · ተመዝግቧል", "bg-green-100 text-green-800"],
+  declined: ["declined · ውድቅ", "bg-red-100 text-red-800"],
 };
 
 /** Badge colours in ChipChip B2B's palette: blue in progress, amber waiting on you, green done, red stopped. */
 const COLOR: Record<string, string> = {
   collecting: "bg-blue-100 text-blue-800", waiting_company: "bg-yellow-100 text-yellow-800", asked: "bg-blue-100 text-blue-800",
   proposed: "bg-amber-100 text-amber-800", created: "bg-green-100 text-green-800", rejected: "bg-red-100 text-red-800",
-  unknown_sender: "bg-red-100 text-red-800",
+  unknown_sender: "bg-red-100 text-red-800", waiting_signup: "bg-amber-100 text-amber-800",
 };
 
 /** What customers sent the order bot, exactly as it arrived; who may use the bot; the bot's connection. */
@@ -29,6 +38,7 @@ export default async function Received() {
     const s = await db().storage.from(BUCKET).createSignedUrl(m.file_path, 3600);
     if (s.data?.signedUrl) urls.set(m.file_path, s.data.signedUrl);
   }
+  const signups = must(await db().from("bot_signups").select("*").order("id", { ascending: false }).limit(20)) as any[];
   const contacts = must(await db().from("bot_contacts").select("*")) as any[];
   const links = must(await db().from("adm_b2b_customer_users").select("role, adm_users(name,phone), adm_b2b_customers(business_name)")) as any[];
   const people = new Map<string, { name: string; phone: string; companies: string[] }>();
@@ -76,6 +86,43 @@ export default async function Received() {
           ))}
         </div>
       ))}
+
+      <div>
+        <h2 className="text-xl md:text-2xl font-bold tracking-tight text-gray-900">Sign-ups</h2>
+        <div className="am">አዲስ ምዝገባዎች</div>
+        <p className="page-sub">New customers whose number is not linked to any company yet: the bot asks their business, type, TIN and
+          delivery place, and they can already send an order while you decide. · ቁጥራቸው ገና ከድርጅት ጋር ያልተገናኘ አዲስ ደንበኞች።</p>
+      </div>
+      <div className="card overflow-hidden">
+        {signups.length === 0 ? (
+          <div className="p-6 text-gray-500">No sign-ups yet. · እስካሁን ምዝገባ የለም።</div>
+        ) : (
+          <div className="tbl-wrap">
+            <table className="tbl">
+              <thead><tr><th>Business</th><th>Phone</th><th>Type</th><th>TIN</th><th>Place</th><th>Status</th></tr></thead>
+              <tbody>
+                {signups.map((s) => {
+                  const [label, color] = SIGNUP_STATUS[s.status] || [s.status, "bg-gray-100 text-gray-800"];
+                  const map = s.latitude != null && s.longitude != null ? `https://maps.google.com/?q=${s.latitude},${s.longitude}` : null;
+                  return (
+                    <tr key={s.id}>
+                      <td className="font-medium text-gray-900">{s.business_name || "…"}
+                        {s.telegram_name && <div className="text-xs text-gray-500">{s.telegram_name}</div>}</td>
+                      <td className="whitespace-nowrap">+{s.phone}</td>
+                      <td className="text-gray-700">{s.business_type || "…"}</td>
+                      <td className="text-gray-700">{s.tin || (s.step === "location" || s.step === "done" ? "none yet" : "…")}</td>
+                      <td className="text-gray-700 break-words">{s.address || ""}
+                        {map && <> {s.address ? "· " : ""}<a className="text-red-700 underline" href={map} target="_blank" rel="noreferrer">map</a></>}</td>
+                      <td><span className={`badge ${color}`}>{label}</span>
+                        {s.agent_note && <div className="text-xs text-gray-500 mt-1">{s.agent_note}</div>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       <div>
         <h2 className="text-xl md:text-2xl font-bold tracking-tight text-gray-900">Who may order through the bot</h2>

@@ -1,5 +1,6 @@
+import { randomUUID } from "crypto";
 import { db, must } from "./db";
-import { Schema, pgError } from "./pgrest";
+import { InsertDef, Schema, pgError } from "./pgrest";
 
 /**
  * The fake ChipChip B2B. Real B2B is a Supabase project: PostgREST tables + three RPCs the order flow uses.
@@ -10,6 +11,39 @@ import { Schema, pgError } from "./pgrest";
  *   the New Order dialog's own steps (credit check, tax, notes) src/services/order/createOrderWithTax.ts
  */
 
+/**
+ * POST /rest/v1/customers: the one direct table write copied. The real app inserts customers from the Add Customer
+ * form (src/services/customers/addCustomer.ts) and the Telegram sign-up (src/services/telegram/registration/
+ * customerRegistration.ts, source 'telegram'). Real columns and constraints from src/integrations/supabase/types.ts
+ * (customers.Insert: name, email, customer_type_id required; FK customers_customer_type_id_fkey).
+ */
+const CUSTOMERS_INSERT: InsertDef = {
+  columns: {
+    id: "uuid", name: "text", phone: "text", email: "text", address: "text", customer_type_id: "uuid", type: "text",
+    is_active: "boolean", approval_status: "text", credit_limit: "numeric", credit_status: "text", agreement_url: "text",
+    agreement_date: "text", tin_number: "text", tax_exempt_override: "boolean", tax_exempt_reason: "text",
+    legal_process_initiated: "boolean", legal_process_date: "timestamptz", assigned_sales_agent_id: "uuid",
+    telegram_id: "bigint", latitude: "numeric", longitude: "numeric", location_accuracy: "numeric", source: "text",
+    created_at: "timestamptz",
+  },
+  notNull: ["id", "name", "email", "customer_type_id", "is_active", "credit_limit", "credit_status", "created_at"],
+  // No default on the real table. (The mock's email column defaults to '' only for its old seed rows.)
+  noDefault: ["name", "email", "customer_type_id"],
+  // Real columns of customers the mock table does not have. addCustomer.ts sends password, license_url and
+  // parent_customer_id (null for a new customer); the real table takes them, so the mock accepts and drops them
+  // rather than answering PGRST204. Anything else unknown is PGRST204, as on the real API.
+  dropped: [
+    "password", "license_url", "parent_customer_id", "account_restricted", "account_restriction_date", "acquisition_date",
+    "acquisition_source", "active_credit_orders_count", "business_type", "conversation_count", "last_conversation_date",
+    "last_payment_date", "preferred_payment", "products_sold", "restock_cycle", "sms_notifications_enabled",
+    "sms_opt_out_date", "updated_by",
+  ],
+  generated: { id: () => randomUUID() },  // the real id defaults to gen_random_uuid(); the mock column has no default
+  // Constraint name as the real table is expected to carry it (email unique; name not seen in b2bchip's migrations).
+  unique: [{ column: "email", constraint: "customers_email_key" }],
+  fks: [{ column: "customer_type_id", constraint: "customers_customer_type_id_fkey", table: "customer_types", foreign: "id" }],
+};
+
 /** Exposed table name -> mock table, and the foreign keys PostgREST would embed on. */
 export const B2B_SCHEMA: Schema = {
   customers: {
@@ -18,6 +52,7 @@ export const B2B_SCHEMA: Schema = {
       customer_types: { table: "customer_types", kind: "one", local: "customer_type_id", foreign: "id" },
       orders: { table: "orders", kind: "many", local: "id", foreign: "customer_id" },
     },
+    insert: CUSTOMERS_INSERT,
   },
   customer_types: { real: "b2b_customer_types", rels: { customers: { table: "customers", kind: "many", local: "id", foreign: "customer_type_id" } } },
   products: { real: "b2b_products", rels: { product_prices: { table: "product_prices", kind: "many", local: "id", foreign: "product_id" } } },

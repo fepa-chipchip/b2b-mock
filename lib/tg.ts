@@ -34,9 +34,42 @@ export const SAY = {
   linked: (companies: string) =>
     `Thank you. You order for: ${companies}.\nSend your order here any way you like: a list, a photo or a file.\n\n` +
     `እናመሰግናለን። የሚያዙት ለ፦ ${companies}።\nትዕዛዝዎን እዚህ ይላኩ፦ ዝርዝር፣ ፎቶ ወይም ፋይል።`,
-  unknown_phone:
-    "We could not find this number among our business customers. Simenesh has been told and will add you.\n\n" +
-    "ይህ ቁጥር በድርጅት ደንበኞቻችን ውስጥ አልተገኘም። ለስመኝሽ ተነግሯታል፣ ትጨምርዎታለች።",
+  // New-customer sign-up: an unknown number answers four questions, one at a time, then Simenesh decides.
+  signup_start:
+    "This number is not a ChipChip business customer yet. Let's sign you up with four short questions.\n\n" +
+    "ይህ ቁጥር ገና የቺፕቺፕ ድርጅት ደንበኛ አይደለም። በአራት አጭር ጥያቄዎች እንመዝግብዎት።",
+  ask_business_name:
+    "What is the name of your business?\n\nየድርጅትዎ ስም ማን ነው?",
+  ask_business_type:
+    "What kind of business is it?\n\nምን ዓይነት ድርጅት ነው?",
+  business_types: [
+    { value: "Restaurant", label: "Restaurant / ምግብ ቤት" },
+    { value: "Hotel", label: "Hotel / ሆቴል" },
+    { value: "Corporate", label: "Corporate / ኮርፖሬት" },
+    { value: "Other", label: "Other / ሌላ" },
+  ],
+  ask_type_other:
+    "Please tell us in your own words what kind of business it is.\n\nእባክዎ የድርጅትዎን ዓይነት በራስዎ ቃላት ይንገሩን።",
+  ask_tin:
+    "What is your business's TIN (tax number)? If you do not have one yet, press the button.\n\n" +
+    "የድርጅትዎ የግብር ከፋይ መለያ ቁጥር (TIN) ስንት ነው? ገና ከሌለዎት ቁልፉን ይጫኑ።",
+  no_tin_button: "No TIN yet / ገና TIN የለኝም",
+  ask_location:
+    "Where should we deliver? Press the button to share your location, or type the address.\n\n" +
+    "የት እናድርስ? አካባቢዎን ለማጋራት ቁልፉን ይጫኑ፣ ወይም አድራሻውን ይጻፉ።",
+  location_button: "Share my location / አካባቢዬን አጋራ",
+  signup_done:
+    "Thank you! Simenesh will confirm your registration shortly. You can already send your order here: a list, a photo or a file.\n\n" +
+    "እናመሰግናለን! ስመኝሽ ምዝገባዎን በቅርቡ ታረጋግጣለች። ትዕዛዝዎን አሁኑኑ እዚህ መላክ ይችላሉ፦ ዝርዝር፣ ፎቶ ወይም ፋይል።",
+  registered: (business: string, hasOrder: boolean) =>
+    hasOrder
+      ? `You're registered for ${business}. Your order is being prepared.\n\nለ${business} ተመዝግበዋል። ትዕዛዝዎ እየተዘጋጀ ነው።`
+      : `You're registered for ${business}. Send your order here any way you like: a list, a photo or a file.\n\n` +
+        `ለ${business} ተመዝግበዋል። ትዕዛዝዎን እዚህ ይላኩ፦ ዝርዝር፣ ፎቶ ወይም ፋይል።`,
+  signup_declined:
+    "Thank you for your interest. We cannot open a business account for this number at the moment. " +
+    "Please contact ChipChip if you have questions.\n\n" +
+    "ስለ ፍላጎትዎ እናመሰግናለን። ለዚህ ቁጥር በአሁኑ ጊዜ የድርጅት መለያ መክፈት አልቻልንም። ጥያቄ ካለዎት እባክዎ ቺፕቺፕን ያግኙ።",
   need_phone:
     "Please share your phone number first with the button below.\n\nእባክዎ መጀመሪያ ከታች ባለው ቁልፍ ስልክ ቁጥርዎን ያጋሩ።",
   received:

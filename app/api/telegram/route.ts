@@ -34,26 +34,33 @@ export async function POST(req: Request) {
 
 async function onMessage(m: any) {
   const chat = m.chat.id as number;
-  if (m.text && m.text.startsWith("/start")) return askPhone(chat, SAY.welcome);
+  if (m.text && m.text.startsWith("/start")) {
+    // A sign-up in progress picks up where it stopped: the question they have not answered yet.
+    const open = await openSignup(m.from.id);
+    if (open) return askStep(chat, open);
+    return askPhone(chat, SAY.welcome);
+  }
 
   if (m.contact) {
     if (m.contact.user_id && m.contact.user_id !== m.from.id) return askPhone(chat, SAY.need_phone);
     const phone = normPhone(m.contact.phone_number);
     const { user, companies } = await companiesForPhone(phone);
-    if (!user || companies.length === 0) {
-      must(await db().from("inbox").insert({ telegram_chat_id: chat, sender_phone: phone, sender_name: senderName(m), status: "unknown_sender",
-        agent_note: `Shared phone ${phone}; not a linked user of any company in Admin.` }).select("id"));
-      return send(chat, SAY.unknown_phone, { reply_markup: { remove_keyboard: true } });
-    }
+    if (!user || companies.length === 0) return startSignup(chat, m, phone);
     must(await db().from("bot_contacts").upsert({ telegram_id: m.from.id, phone, telegram_name: senderName(m), linked_at: new Date().toISOString() })
       .select("telegram_id"));
     return send(chat, SAY.linked(companies.map((c) => c.business_name).join(", ")), { reply_markup: { remove_keyboard: true } });
   }
 
   const contact = must(await db().from("bot_contacts").select("*").eq("telegram_id", m.from.id).maybeSingle()) as { phone: string } | null;
-  if (!contact) return askPhone(chat, SAY.need_phone);
-  const { user, companies } = await companiesForPhone(contact.phone);
-  if (!user || companies.length === 0) return send(chat, SAY.unknown_phone);
+  const known = contact ? await companiesForPhone(contact.phone) : null;
+  if (!contact || !known?.user || known.companies.length === 0) {
+    // Not (or no longer) a linked user: an open sign-up takes the message, as an answer or, once answered, as an order.
+    const open = await openSignup(m.from.id);
+    if (open?.status === "collecting") return onSignupAnswer(chat, m, open);
+    if (open?.status === "waiting_approval") return onSignupOrder(chat, m, open);
+    return askPhone(chat, SAY.need_phone);
+  }
+  const { user, companies } = known;
 
   // The order this message belongs to: the sender's open one if recent, one we asked them about today
   // (this is their answer), else a new one.
@@ -110,12 +117,130 @@ async function saveMessage(inboxId: number, m: any) {
 
 async function onButton(q: any) {
   const [tag, inboxId, companyId] = String(q.data || "").split(":");
+  if (tag === "st" || tag === "nt") return onSignupButton(q, tag, Number(inboxId), companyId);
   if (tag !== "co") return tg("answerCallbackQuery", { callback_query_id: q.id });
   const co = must(await db().from("adm_b2b_customers").select("business_name").eq("id", companyId).maybeSingle()) as { business_name: string } | null;
   must(await db().from("inbox").update({ company_id: companyId, status: "collecting", last_message_at: new Date().toISOString() })
     .eq("id", Number(inboxId)).eq("status", "waiting_company").select("id"));
   await tg("answerCallbackQuery", { callback_query_id: q.id, text: co?.business_name || "" });
   if (q.message) await tg("editMessageText", { chat_id: q.message.chat.id, message_id: q.message.message_id, text: SAY.company_set(co?.business_name || "") });
+}
+
+/* ---------- New-customer sign-up ----------
+ * An unknown number that shares its contact answers four questions, one at a time (business name, business type,
+ * TIN, delivery place), into one bot_signups row. Then it waits for Simenesh (status waiting_approval); what they send
+ * meanwhile is kept as an order on an inbox row with status waiting_signup, which the agent API moves to collecting
+ * once the customer is registered. Answers are free-form: whatever they write is stored as they wrote it.
+ */
+
+type Signup = {
+  id: number; telegram_id: number; telegram_chat_id: number; phone: string; telegram_name: string | null;
+  step: string; business_name: string | null; business_type: string | null; tin: string | null; address: string | null;
+  status: string;
+};
+
+/** The person's sign-up still in progress (answering, or answered and waiting for Simenesh), if any. */
+async function openSignup(telegramId: number): Promise<Signup | null> {
+  return must(await db().from("bot_signups").select("*").eq("telegram_id", telegramId).in("status", ["collecting", "waiting_approval"])
+    .order("id", { ascending: false }).limit(1).maybeSingle()) as Signup | null;
+}
+
+async function saveSignup(id: number, fields: Partial<Signup> & { latitude?: number | null; longitude?: number | null }) {
+  must(await db().from("bot_signups").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", id).select("id"));
+}
+
+/** An unknown number shared its contact: open a sign-up (or reuse the open one) and ask the next question. */
+async function startSignup(chat: number, m: any, phone: string) {
+  const open = await openSignup(m.from.id);
+  if (open) {
+    await saveSignup(open.id, { phone, telegram_chat_id: chat, telegram_name: senderName(m) || open.telegram_name });
+    return askStep(chat, { ...open, telegram_chat_id: chat, phone });
+  }
+  const s = must(await db().from("bot_signups").insert({ telegram_id: m.from.id, telegram_chat_id: chat, phone, telegram_name: senderName(m),
+    step: "business_name", status: "collecting" }).select("*").single()) as Signup;
+  await send(chat, SAY.signup_start, { reply_markup: { remove_keyboard: true } });
+  return askStep(chat, s);
+}
+
+/** Asks the sign-up's current question again (or, once all are answered, says it is waiting for Simenesh). */
+async function askStep(chat: number, s: Signup) {
+  if (s.status !== "collecting") return send(chat, SAY.signup_done, { reply_markup: { remove_keyboard: true } });
+  switch (s.step) {
+    case "business_name":
+      return send(chat, SAY.ask_business_name, { reply_markup: { remove_keyboard: true } });
+    case "business_type":
+      // "Other" pressed: they now say it in their own words.
+      if (s.business_type === "Other") return send(chat, SAY.ask_type_other);
+      return send(chat, SAY.ask_business_type, {
+        reply_markup: { inline_keyboard: SAY.business_types.map((t) => [{ text: t.label, callback_data: `st:${s.id}:${t.value}` }]) },
+      });
+    case "tin":
+      return send(chat, SAY.ask_tin, { reply_markup: { inline_keyboard: [[{ text: SAY.no_tin_button, callback_data: `nt:${s.id}` }]] } });
+    default:
+      return send(chat, SAY.ask_location, {
+        reply_markup: { keyboard: [[{ text: SAY.location_button, request_location: true }]], resize_keyboard: true, one_time_keyboard: true },
+      });
+  }
+}
+
+/** A message while the sign-up is collecting: the answer to the current question. Anything without words re-asks. */
+async function onSignupAnswer(chat: number, m: any, s: Signup) {
+  const text = String(m.text || "").trim();
+  let next: Partial<Signup> & { latitude?: number | null; longitude?: number | null };
+  if (s.step === "business_name") {
+    if (!text) return askStep(chat, s);
+    next = { business_name: text, step: "business_type" };
+  } else if (s.step === "business_type") {
+    if (!text) return askStep(chat, s);
+    next = { business_type: text, step: "tin" };
+  } else if (s.step === "tin") {
+    if (!text) return askStep(chat, s);
+    next = { tin: text, step: "location" };
+  } else {
+    if (m.venue) {
+      next = { address: [m.venue.title, m.venue.address].filter(Boolean).join(", ") || null,
+        latitude: m.venue.location?.latitude ?? null, longitude: m.venue.location?.longitude ?? null };
+    } else if (m.location) {
+      next = { latitude: m.location.latitude, longitude: m.location.longitude };
+    } else if (text) {
+      next = { address: text };
+    } else return askStep(chat, s);
+    next = { ...next, step: "done", status: "waiting_approval" };
+  }
+  await saveSignup(s.id, next);
+  return askStep(chat, { ...s, ...next } as Signup);
+}
+
+/** The business-type and "No TIN yet" buttons. Only the sign-up's own person, and only at that step. */
+async function onSignupButton(q: any, tag: string, id: number, value: string | undefined) {
+  const s = must(await db().from("bot_signups").select("*").eq("id", id).maybeSingle()) as Signup | null;
+  const chat = q.message?.chat?.id as number | undefined;
+  const fits = s && chat && s.telegram_id === q.from?.id && s.status === "collecting" &&
+    (tag === "st" ? s.step === "business_type" && SAY.business_types.some((t) => t.value === value) : s.step === "tin");
+  if (!fits) return tg("answerCallbackQuery", { callback_query_id: q.id });
+  const label = tag === "st" ? SAY.business_types.find((t) => t.value === value)!.label : SAY.no_tin_button;
+  await tg("answerCallbackQuery", { callback_query_id: q.id, text: label });
+  await tg("editMessageText", { chat_id: chat, message_id: q.message.message_id, text: SAY.company_set(label) });
+  // "Other" keeps the step: their own words come next and replace it.
+  const next: Partial<Signup> = tag === "nt" ? { tin: null, step: "location" }
+    : value === "Other" ? { business_type: "Other" } : { business_type: value, step: "tin" };
+  await saveSignup(s.id, next);
+  return askStep(chat, { ...s, ...next });
+}
+
+/** A message while the sign-up waits for Simenesh: kept as an order (status waiting_signup) for when they are registered. */
+async function onSignupOrder(chat: number, m: any, s: Signup) {
+  const since = new Date(Date.now() - SAME_ORDER_MINUTES * 60_000).toISOString();
+  let inbox = must(await db().from("inbox").select("id").eq("telegram_chat_id", chat).eq("status", "waiting_signup")
+    .gte("last_message_at", since).order("id", { ascending: false }).limit(1).maybeSingle()) as { id: number } | null;
+  const isNew = !inbox;
+  if (!inbox)
+    inbox = must(await db().from("inbox").insert({ telegram_chat_id: chat, sender_phone: s.phone, sender_name: s.telegram_name,
+      status: "waiting_signup", agent_note: `Sign-up #${s.id} (${s.business_name || "?"}) waiting for approval.` })
+      .select("id").single()) as { id: number };
+  await saveMessage(inbox.id, m);
+  must(await db().from("inbox").update({ last_message_at: new Date().toISOString() }).eq("id", inbox.id).select("id"));
+  if (isNew) await send(chat, SAY.received);
 }
 
 const senderName = (m: any) => [m.from?.first_name, m.from?.last_name].filter(Boolean).join(" ") || m.from?.username || "";

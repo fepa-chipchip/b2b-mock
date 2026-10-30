@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { db, must, normPhone } from "./db";
 
 /**
@@ -101,6 +101,50 @@ export async function customerTypes() {
   return must(await db().from("adm_customer_types").select("*").order("name"));
 }
 
+export type CreateCompanyBody = {
+  business_name?: unknown; tin?: unknown; phone?: unknown; customer_type_id?: unknown; credit_limit?: unknown;
+  payment_terms_days?: unknown; assigned_sales_agent_id?: unknown;
+};
+
+/**
+ * POST /system/b2b-customers: register a company and its wallet in one step (chipadminreact docs/B2B.md step 2,
+ * CreateB2BPayload in src/services/B2BServices.ts, AddCompanyModal in src/components/pages/b2b/B2BPage.tsx).
+ * Defaults as documented: status ACTIVE, credit_status GOOD, credit_limit 0, payment_terms_days 30. The wallet the real
+ * backend provisions under parent account "2003" is a wallet_account_id in the seed's format, `2003-<md5 of the id>`,
+ * with balance 0.
+ * The error messages below are ASSUMED: the real API's wording for a missing/invalid field was not observed.
+ * A second company with the same TIN is not refused: whether the real API refuses it is not known.
+ * assigned_sales_agent_id is accepted and not kept (the mock table has no such column).
+ */
+export async function createCompany(b: CreateCompanyBody) {
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
+  const businessName = str(b.business_name);
+  const tin = str(b.tin);
+  if (!businessName) throw fail(400, "business_name is required");
+  if (!tin) throw fail(400, "tin is required");
+  const num = (v: unknown, name: string, int = false) => {
+    if (v === undefined || v === null || v === "") return undefined;
+    const n = Number(v);
+    if (typeof v === "boolean" || !isFinite(n) || n < 0 || (int && !Number.isInteger(n))) throw fail(400, `invalid ${name}`);
+    return n;
+  };
+  const creditLimit = num(b.credit_limit, "credit_limit") ?? 0;
+  const terms = num(b.payment_terms_days, "payment_terms_days", true) ?? 30;
+  let typeId: string | null = null;
+  if (b.customer_type_id !== undefined && b.customer_type_id !== null && b.customer_type_id !== "") {
+    typeId = String(b.customer_type_id);
+    const t = UUID.test(typeId) ? must(await db().from("adm_customer_types").select("id").eq("id", typeId).maybeSingle()) : null;
+    if (!t) throw fail(400, "customer type not found");
+  }
+  const id = randomUUID();
+  const row = must(await db().from("adm_b2b_customers").insert({
+    id, business_name: businessName, tin, phone: normPhone(str(b.phone)) || null, status: "ACTIVE", credit_limit: creditLimit,
+    payment_terms_days: terms, credit_status: "GOOD", customer_type_id: typeId,
+    wallet_account_id: `2003-${createHash("md5").update(id).digest("hex")}`, wallet_balance: 0,
+  }).select("*").single());
+  return companyJson(row);
+}
+
 // ------------------------------------------------------------------ users (system)
 async function userRow(id: string) {
   if (!UUID.test(id)) throw fail(404, "user not found");
@@ -132,6 +176,31 @@ export async function searchUsers(term: string, page = 1, perPage = 20) {
   const t = term.trim().toLowerCase().replace(/^\+/, "");
   const hits = t ? all.filter((u) => [u.name, u.phone, u.email].some((v) => String(v || "").toLowerCase().includes(t))) : all;
   return { rows: hits.slice((page - 1) * perPage, page * perPage).map((u) => userJson(u)), total: hits.length };
+}
+
+/**
+ * STAGING-ONLY, NOT A COPY OF THE REAL ADMIN. POST /system/users { name, phone, telegram_id? }: creates an ordinary
+ * app user (is_system false). The real Admin has no such call: people sign up themselves in the ChipChip app. It exists
+ * so the test can run the whole new-customer sign-up (user -> company -> link -> location) without the app.
+ * At go-live the agent must not call it; it looks the person up instead (GET /system/users/:phone).
+ * Phone is normalised like every phone in the mock (2519...). Messages other than the duplicate one are the mock's own.
+ */
+export async function createUser(b: any) {
+  const name = typeof b?.name === "string" ? b.name.trim() : "";
+  if (!name) throw fail(400, "name is required");
+  const phone = normPhone(b?.phone == null ? "" : String(b.phone));
+  if (!phone) throw fail(400, "phone is required");
+  let telegramId: number | null = null;
+  if (b?.telegram_id !== undefined && b?.telegram_id !== null && b?.telegram_id !== "") {
+    telegramId = Number(b.telegram_id);
+    if (!Number.isInteger(telegramId)) throw fail(400, "invalid telegram_id");
+  }
+  const taken = must(await db().from("adm_users").select("id").eq("phone", phone).maybeSingle());
+  if (taken) throw fail(400, "user with this phone already exists");
+  const res = await db().from("adm_users").insert({ id: randomUUID(), name, phone, telegram_id: telegramId, is_system: false })
+    .select("*").single();
+  if (res.error?.code === "23505") throw fail(400, "user with this phone already exists");  // lost a race on the unique phone
+  return userJson(must(res), "");
 }
 
 // ------------------------------------------------------------------ products
@@ -230,6 +299,33 @@ export async function cartOf(userId: string): Promise<CartLine[]> {
 export type LocationJson = { id: string; name: string; location_title: string | null; contact_phone: string | null };
 export async function locationsOf(userId: string): Promise<LocationJson[]> {
   return must(await db().from("adm_locations").select("id,name,location_title,contact_phone").eq("user_id", userId).order("name")) as LocationJson[];
+}
+
+/**
+ * POST /locations (shopper token: a location of the token's user). Body as Admin's Manual Orders page sends it
+ * (src/components/pages/ManualOrders/ManualOrders.tsx): { additional_contact_name, additional_contact_phone,
+ * delivery_type: "DROP_OF_POINT", location: { latitude, longitude }, location_title, name }. The page reads only
+ * response.data.data.id; the rest of `data` is the mock's guess at the saved location. Error messages are ASSUMED
+ * (the real API's wording was not observed). The new location is then listed by GET /locations/last_mile.
+ */
+export async function createLocation(userId: string, b: any) {
+  const name = typeof b?.name === "string" ? b.name.trim() : "";
+  if (!name) throw fail(400, "name is required");
+  const lat = Number(b?.location?.latitude), lng = Number(b?.location?.longitude);
+  if (b?.location?.latitude == null || b?.location?.longitude == null || !isFinite(lat) || !isFinite(lng) ||
+      Math.abs(lat) > 90 || Math.abs(lng) > 180) throw fail(400, "invalid location");
+  const phoneRaw = b?.additional_contact_phone == null ? "" : String(b.additional_contact_phone).trim();
+  const row = must(await db().from("adm_locations").insert({
+    user_id: userId, name, location_title: typeof b?.location_title === "string" && b.location_title.trim() ? b.location_title.trim() : name,
+    contact_phone: phoneRaw ? normPhone(phoneRaw) || phoneRaw : null, latitude: lat, longitude: lng,
+    delivery_type: typeof b?.delivery_type === "string" && b.delivery_type ? b.delivery_type : "DROP_OF_POINT",
+    additional_contact_name: b?.additional_contact_name == null ? null : String(b.additional_contact_name),
+  }).select("*").single()) as any;
+  return {
+    id: row.id, name: row.name, location_title: row.location_title, contact_phone: row.contact_phone,
+    additional_contact_name: row.additional_contact_name, additional_contact_phone: row.contact_phone,
+    delivery_type: row.delivery_type, location: { latitude: Number(row.latitude), longitude: Number(row.longitude) },
+  };
 }
 
 export async function paymentMethods() {

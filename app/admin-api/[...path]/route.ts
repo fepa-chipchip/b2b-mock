@@ -58,6 +58,8 @@ const ROUTES: Route[] = [
     const r = await A.listCompanies(page, perPage);
     return okJson(r.rows, { total: r.total, page: r.page, per_page: r.per_page });
   }),
+  // Register a company + wallet (docs/B2B.md step 2: answers 201 with the company).
+  R("POST", "v1/system/b2b-customers", "system", async ({ body }) => okJson(await A.createCompany(body || {}), undefined, 201)),
   R("GET", "v1/system/b2b-customers/user/:id", "system", async (_c, [uid]) => okJson(await A.companyOfUser(uid))),
   R("GET", "v1/system/b2b-customers/:id", "system", async (_c, [id]) => okJson(await A.getCompany(id))),
   R("GET", "v1/system/b2b-customers/:id/statement", "system", async (_c, [id]) => okJson(await A.statement(id))),
@@ -68,6 +70,9 @@ const ROUTES: Route[] = [
   R("GET", "v1/system/customer-types", "system", async () => okJson(await A.customerTypes())),
 
   // ---- system: users (the lookups that hand out a shopper token)
+  // STAGING-ONLY: the real Admin has no "create user" call (people sign up in the ChipChip app). It lets the test run
+  // the whole new-customer sign-up; see A.createUser. Status 201 is the mock's choice.
+  R("POST", "v1/system/users", "system", async ({ body }) => okJson(await A.createUser(body || {}), undefined, 201)),
   R("GET", "v1/system/users", "system", async ({ url }) => {
     const { page, perPage } = pageOf(url);
     const r = await A.searchUsers(filterTerm(url).term, page, perPage);
@@ -104,6 +109,8 @@ const ROUTES: Route[] = [
   R("GET", "v1/carts/group", "shopper", async ({ session }) => okJson(await A.cartOf(session!.user_id))),
   R("POST", "v1/bill/groups", "shopper", async ({ session, body }) => okJson(await A.bill(session!.user_id, body))),
   R("GET", "v1/locations/last_mile", "shopper", async ({ session }) => okJson(await A.locationsOf(session!.user_id))),
+  // Save a delivery location for the token's user (Manual Orders' new location). Status 200 assumed: the page checks data.ok.
+  R("POST", "v1/locations", "shopper", async ({ session, body }) => okJson(await A.createLocation(session!.user_id, body || {}))),
   R("GET", "v2/orders/payment_methods", "shopper", async () => okJson(await A.paymentMethods())),
   R("POST", "v2/orders/multiple-group", "shopper", async ({ session, body }) => okJson(await A.checkout(session!.user_id, body || {}))),
   R("GET", "v1/order/group", "shopper", async ({ session, url }) => {

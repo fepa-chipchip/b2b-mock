@@ -12,7 +12,7 @@ drop table if exists
   -- old mock tables (before the two systems were split)
   orders, locations, staff_companies, staff, products, companies,
   -- bot, settings, feedback, logins
-  feedback, inbox_messages, inbox, bot_contacts, settings, mock_sessions, mock_accounts,
+  feedback, inbox_messages, inbox, bot_signups, bot_contacts, settings, mock_sessions, mock_accounts,
   -- fake Admin
   adm_orders, adm_group_carts, adm_groups, adm_locations, adm_payment_methods, adm_group_deals, adm_products,
   adm_b2b_customer_users, adm_users, adm_b2b_customers, adm_customer_types,
@@ -67,8 +67,14 @@ create table b2b_customers (
   legal_process_date timestamptz,
   assigned_sales_agent_id uuid,
   telegram_id bigint,
+  latitude numeric,
+  longitude numeric,
+  location_accuracy numeric,
+  source text,                                  -- 'telegram' for a customer the order bot signed up
   created_at timestamptz not null default now()
 );
+-- The real table refuses a second customer with the same email (23505).
+create unique index b2b_customers_email_key on b2b_customers (email) where email <> '';
 
 create table b2b_products (
   id uuid primary key,
@@ -230,7 +236,11 @@ create table adm_locations (
   user_id uuid not null references adm_users(id) on delete cascade,
   name text not null,
   location_title text,
-  contact_phone text
+  contact_phone text,
+  latitude numeric,
+  longitude numeric,
+  delivery_type text,
+  additional_contact_name text
 );
 
 create table adm_groups (
@@ -303,6 +313,29 @@ create table bot_contacts (
   linked_at timestamptz default now()
 );
 
+-- One sign-up: an unknown number that answered the bot's questions. The agent reads the ones waiting for Simenesh,
+-- asks her, creates the customer in both systems and then sets registered (or declined).
+create table bot_signups (
+  id serial primary key,
+  telegram_id bigint not null,
+  telegram_chat_id bigint not null,
+  phone text not null,               -- digits with country code, as shared through Telegram
+  telegram_name text,
+  step text not null default 'business_name',  -- business_name | business_type | tin | location | done
+  business_name text,
+  business_type text,                -- Restaurant | Hotel | Corporate | Other (the customer's own words when Other)
+  tin text,                          -- null when they have none
+  address text,                      -- the place name they typed, or Telegram's venue title
+  latitude numeric,
+  longitude numeric,
+  status text not null default 'collecting',  -- collecting | waiting_approval | registered | declined
+  agent_note text,
+  b2b_customer_id uuid,              -- set by the agent once created
+  admin_company_id uuid,
+  admin_user_id uuid,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
 create table settings (
   key text primary key,
   value text not null,
@@ -525,7 +558,7 @@ begin
     'b2b_pricing_settings','b2b_orders','b2b_order_items',
     'adm_customer_types','adm_b2b_customers','adm_users','adm_b2b_customer_users','adm_products','adm_group_deals',
     'adm_payment_methods','adm_locations','adm_groups','adm_group_carts','adm_orders',
-    'mock_accounts','mock_sessions','bot_contacts','settings','inbox','inbox_messages','feedback']
+    'mock_accounts','mock_sessions','bot_contacts','bot_signups','settings','inbox','inbox_messages','feedback']
   loop
     execute format('alter table %I enable row level security', t);
   end loop;

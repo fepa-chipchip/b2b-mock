@@ -17,7 +17,24 @@ export const pgError = (status: number, code: string | null, message: string, de
   new PgError(status, { code, details, hint, message });
 
 export type Rel = { table: string; kind: "one" | "many"; local: string; foreign: string };
-export type TableDef = { real: string; hidden?: string[]; rels: Record<string, Rel> };
+export type TableDef = { real: string; hidden?: string[]; rels: Record<string, Rel>; insert?: InsertDef };
+
+/** Column types the insert checks the way Postgres parses them (others are taken as text). */
+export type ColType = "uuid" | "text" | "numeric" | "bigint" | "boolean" | "timestamptz";
+
+/**
+ * What POST /rest/v1/<table> may write, copied from the real table: its columns, which refuse null,
+ * which have no default (omitting them = null), unique keys and foreign keys under the REAL constraint names.
+ */
+export type InsertDef = {
+  columns: Record<string, ColType>;          // columns of the mock table, in table order
+  notNull: string[];                         // NOT NULL on the real table
+  noDefault: string[];                       // no default on the real table: omitted = null
+  dropped?: string[];                        // real columns the mock table lacks: accepted and not stored
+  generated?: Record<string, () => unknown>; // filled when omitted (the mock table has no default for them)
+  unique?: { column: string; constraint: string }[];
+  fks?: { column: string; constraint: string; table: string; foreign: string }[];
+};
 export type Schema = Record<string, TableDef>;
 
 type Node =
@@ -252,4 +269,158 @@ export async function readTable(schema: Schema, table: string, url: URL, headers
     return { body: page[0], contentRange };
   }
   return { body: page, contentRange };
+}
+
+// ------------------------------------------------------------------------------------------------ insert
+const UUID_RE = /^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i;
+const BOOL_TRUE = /^(t|true|y|yes|on|1)$/i, BOOL_FALSE = /^(f|false|n|no|off|0)$/i;
+
+/** Parses one value as Postgres would for the column type; 22P02 when it cannot. */
+function castValue(type: ColType, v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  const bad = (t: string) => pgError(400, "22P02", `invalid input syntax for type ${t}: "${typeof v === "object" ? JSON.stringify(v) : String(v)}"`);
+  switch (type) {
+    case "uuid":
+      if (typeof v !== "string" || !UUID_RE.test(v.trim())) throw bad("uuid");
+      return v.trim().toLowerCase();
+    case "numeric":
+      if (typeof v === "boolean" || typeof v === "object" || String(v).trim() === "" || !isFinite(Number(v))) throw bad("numeric");
+      return Number(v);
+    case "bigint":
+      if (typeof v === "boolean" || typeof v === "object" || !/^\s*-?\d+\s*$/.test(String(v))) throw bad("bigint");
+      return Number(v);
+    case "boolean":
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string" && BOOL_TRUE.test(v.trim())) return true;
+      if (typeof v === "string" && BOOL_FALSE.test(v.trim())) return false;
+      throw bad("boolean");
+    case "timestamptz":
+      if (typeof v !== "string" || isNaN(Date.parse(v))) throw bad("timestamp with time zone");
+      return v;
+    default:
+      return typeof v === "object" ? JSON.stringify(v) : String(v);
+  }
+}
+
+const pgStatusOf = (code: string | null | undefined) =>
+  code === "23503" || code === "23505" ? 409 : code === "42501" ? 403 : code === "PGRST116" ? 406 : 400;
+
+/**
+ * POST /rest/v1/<table>: PostgREST's insert. Body: one object or an array of them (all with the same keys, unless
+ * `?columns=` names them; then a key missing from an object is null, or the default with `Prefer: missing=default`).
+ * `Prefer: return=representation` returns the inserted rows (projected by `select`, an object with
+ * `Accept: application/vnd.pgrst.object+json`); otherwise 201 with no body. Errors as Postgres raises them through
+ * PostgREST: PGRST204 unknown column, 22P02 bad value, 23502 null in a NOT NULL column, 23505 duplicate key,
+ * 23503 missing foreign row. The whole request is one statement: one bad row inserts nothing.
+ * Not copied: upsert (`on_conflict`, `Prefer: resolution=...`), `return=headers-only` (treated as minimal).
+ */
+export async function insertRows(schema: Schema, table: string, url: URL, headers: Headers, raw: string):
+  Promise<{ status: 201; body: unknown; contentRange: string }> {
+  const def = schema[table];
+  if (!def) throw pgError(404, "PGRST205", `Could not find the table 'public.${table}' in the schema cache`);
+  const ins = def.insert;
+  if (!ins) throw pgError(403, "42501", `permission denied for table ${table}`);
+
+  let parsed: unknown;
+  try { parsed = raw.trim() ? JSON.parse(raw) : undefined; } catch { parsed = undefined; }
+  if (parsed === undefined || parsed === null || typeof parsed !== "object")
+    throw pgError(400, "PGRST102", "Empty or invalid json");
+  const objs = (Array.isArray(parsed) ? parsed : [parsed]) as any[];
+  if (objs.some((o) => !o || typeof o !== "object" || Array.isArray(o))) throw pgError(400, "PGRST102", "Empty or invalid json");
+
+  const prefer = headers.get("prefer") || "";
+  const single = (headers.get("accept") || "").includes("application/vnd.pgrst.object+json");
+
+  // Which columns the statement writes: ?columns=a,b or the keys of the (first) object.
+  const columnsParam = url.searchParams.get("columns");
+  let cols: string[];
+  if (columnsParam) {
+    cols = columnsParam.split(",").map((c) => c.trim().replace(/^"(.*)"$/, "$1")).filter(Boolean);
+  } else {
+    cols = Object.keys(objs[0] || {});
+    const key = (o: object) => Object.keys(o).sort().join(",");
+    if (objs.some((o) => key(o) !== key(objs[0]))) throw pgError(400, "PGRST102", "All object keys must match");
+  }
+  for (const c of cols) {
+    if (!(c in ins.columns) && !ins.dropped?.includes(c))
+      throw pgError(400, "PGRST204", `Could not find the '${c}' column of '${table}' in the schema cache`);
+  }
+  if (single && objs.length !== 1) {
+    throw pgError(406, "PGRST116", "JSON object requested, multiple (or no) rows returned", `The result contains ${objs.length} rows`);
+  }
+
+  // Each row as Postgres would see it.
+  const missingDefault = /missing=default/.test(prefer);
+  const rows = objs.map((o) => {
+    const row: Record<string, unknown> = {};
+    for (const c of cols) {
+      if (ins.dropped?.includes(c)) continue;  // a real column the mock table does not have: accepted, not stored
+      if (!(c in o) && missingDefault) continue;
+      row[c] = castValue(ins.columns[c], o[c]);  // missing from this object under ?columns= -> null
+    }
+    for (const c of ins.noDefault) if (!(c in row)) row[c] = null;
+    for (const [c, gen] of Object.entries(ins.generated || {})) if (row[c] === undefined || row[c] === null) row[c] = gen();
+    for (const c of ins.notNull) {
+      if (c in row && row[c] === null) {
+        // Postgres lists the row in the table's column order; the mock's order, close to the real one.
+        const shown = Object.keys(ins.columns).map((k) => (row[k] === null || row[k] === undefined ? "null" : String(row[k])));
+        throw pgError(400, "23502", `null value in column "${c}" of relation "${table}" violates not-null constraint`,
+          `Failing row contains (${shown.join(", ")}).`);
+      }
+    }
+    return row;
+  });
+
+  // Unique keys: against the table and within this request.
+  for (const u of ins.unique || []) {
+    const vals = rows.map((r) => r[u.column]).filter((v) => v !== null && v !== undefined);
+    const seen = new Set<string>();
+    let dup: unknown = undefined;
+    for (const v of vals) { if (seen.has(String(v))) { dup = v; break; } seen.add(String(v)); }
+    if (dup === undefined && vals.length) {
+      const hit = must(await db().from(def.real).select(u.column).in(u.column, vals as any[]).limit(1)) as any[];
+      if (hit[0]) dup = hit[0][u.column];
+    }
+    if (dup !== undefined) {
+      throw pgError(409, "23505", `duplicate key value violates unique constraint "${u.constraint}"`, `Key (${u.column})=(${dup}) already exists.`);
+    }
+  }
+  // Foreign keys.
+  for (const fk of ins.fks || []) {
+    const vals = Array.from(new Set(rows.map((r) => r[fk.column]).filter((v) => v !== null && v !== undefined).map(String)));
+    if (!vals.length) continue;
+    const found = new Set((must(await db().from(schema[fk.table].real).select(fk.foreign).in(fk.foreign, vals)) as any[])
+      .map((x) => String(x[fk.foreign])));
+    const miss = vals.find((v) => !found.has(v));
+    if (miss) {
+      throw pgError(409, "23503", `insert or update on table "${table}" violates foreign key constraint "${fk.constraint}"`,
+        `Key (${fk.column})=(${miss}) is not present in table "${fk.table}".`);
+    }
+  }
+
+  // One statement: all rows or none. A database error is reported under the exposed names, not the mock's.
+  const res = await db().from(def.real).insert(rows).select("*");
+  if (res.error) {
+    const rename = (s: string | null) => {
+      if (!s) return s;
+      for (const [name, t] of Object.entries(schema).sort((a, b) => b[1].real.length - a[1].real.length)) s = s.split(t.real).join(name);
+      return s;
+    };
+    const e = res.error as { code?: string; details?: string | null; hint?: string | null; message: string };
+    throw pgError(pgStatusOf(e.code), e.code ?? null, rename(e.message) || "insert failed", rename(e.details ?? null), rename(e.hint ?? null));
+  }
+  const inserted = (res.data || []) as any[];
+
+  if (!/return=representation/.test(prefer)) return { status: 201, body: null, contentRange: "*/*" };
+  // Read each new row back through the read side, so `select` (columns, aliases, embeds) applies as on a GET.
+  const out: unknown[] = [];
+  const sel = url.searchParams.get("select");
+  for (const r of inserted) {
+    const u = new URL("http://mock/");
+    if (sel) u.searchParams.set("select", sel);
+    u.searchParams.set("id", `eq.${r.id}`);
+    const got = await readTable(schema, table, u, new Headers());
+    out.push(...(got.body as unknown[]));
+  }
+  return { status: 201, body: single ? out[0] ?? null : out, contentRange: "*/*" };
 }

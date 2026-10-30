@@ -11,7 +11,9 @@ only base URLs and credentials.
   and the pages **B2B Customers → Companies → a company → Linked Users / Place Order / Orders**.
 - **Order bot (Telegram)**: ours, stays at go-live. Customers' staff send an order in any form (a list, a photo, a file).
   A person is known by phone number as a **linked user of their company in Admin**; the bot groups their messages into
-  one order and asks which company when they are linked to several. Page **Received**.
+  one order and asks which company when they are linked to several. **An unknown number is signed up**: the bot asks
+  the business name, type, TIN and delivery place, keeps their order waiting, and the agent creates the customer in
+  both systems once Simenesh says yes. Page **Received** (orders and sign-ups).
 - **4 questions**: Simenesh's answers, stored for the agent (`GET /api/agent/settings`). The fake systems do not change
   with them; each behaves like the real one.
 
@@ -56,6 +58,7 @@ of all 4 companies with Simenesh's delivery locations) for placing orders: cart,
 `multiple-group` and order history with its own login token, no impersonation. Checkout charges `b2b_customer_id` only
 when that user is linked to it (else 400 `"user is not linked to this b2b customer"`). To add it to a live database
 without wiping test data, run `supabase/add_ordering_user.sql` (safe to re-run) instead of `schema.sql`.
+Likewise `supabase/add_customer_signup.sql` adds the sign-up table and columns to a live database.
 Simenesh's Admin user is `251900000009`, linked to
 every company, with every company's delivery locations, as in reality.
 
@@ -81,6 +84,7 @@ Swap the base URL (and credentials) at go-live; paths, bodies and responses stay
 | `GET /rest/v1/payment_types` | `select=name,label&is_active=eq.true&order=name` | cash, credit, prepaid |
 | `GET /rest/v1/pricing_settings` | `select=*` | `tax_rate 15, delivery_fee_base 0, delivery_fee_threshold_kg 1` |
 | `GET /rest/v1/orders`, `/order_items`, `/customer_types`, `/profiles` | `select` with embeds such as `order_items(*)`, `customers(name)` | rows |
+| `POST /rest/v1/customers` | `{name, email, phone, customer_type_id, address, latitude, longitude, tin_number, is_active, approval_status, credit_limit, source, ...}`, header `Prefer: return=representation` | 201 `[row]`. 400 `23502` missing name/email/customer_type_id, 409 `23505` email taken (`customers_email_key`), 409 `23503` unknown type, 400 `PGRST204` unknown column. The only table write copied, as the real app's Add customer and Telegram sign-up do it |
 | `POST /rest/v1/rpc/check_customer_credit_status` | `{customer_uuid}` | `{customer_id, credit_limit, credit_status, total_unpaid, has_overdue, can_place_order, overdue_orders_count, maximum_unpaid_threshold, is_legal_stage, stage_6_orders}` (resets a stale bad status when nothing is unpaid, like the real one) |
 | `POST /rest/v1/rpc/create_order_with_items` | `{p_customer_id, p_subtotal, p_discount, p_discount_reason, p_tax_amount, p_tax_rate, p_delivery_fee, p_amount, p_delivery_date, p_payment_type, p_payment_status, p_total_quantity, p_source, p_notes, p_items:[{product_id, product_name, quantity, price, total}], p_warehouse_id}` | `{success, order_id, order_number}`; order `Processing` |
 | `POST /rest/v1/rpc/get_orders_page` | `{p_page, p_page_size, p_search, p_status, p_payment_status}` | `{orders[], total, stats}` |
@@ -117,6 +121,9 @@ override → customer type → `pricing_settings.tax_rate`) and delivery fee its
 | `GET v1/locations/last_mile` | shopper | | `[{id, name, location_title, contact_phone}]` |
 | `GET v2/orders/payment_methods` | shopper | | telebirr, MPesa, ChipChip Wallet, CBE, Awash Bank |
 | `POST v2/orders/multiple-group` | shopper | `{account_number, b2b_customer_id, delivery_note, device, group_cart_ids, location_id, payment_method_id, platform, willingness, with_packaging}` | `{order_id (= bill id), bill_id, payment_url: ""}`; refused 400 `"order exceeds available credit limit"` when `balance − amount < −credit_limit` |
+| `POST v1/locations` | shopper | `{additional_contact_name, additional_contact_phone, delivery_type: "DROP_OF_POINT", location:{latitude, longitude}, location_title, name}` | `data: {id, ...}`; the place then shows in `locations/last_mile`. 400 `name is required` / `invalid location` |
+| `POST v1/system/b2b-customers` | back-office | `{business_name, tin, phone?, customer_type_id?, credit_limit?, payment_terms_days?}` | 201, the company (new wallet, credit limit 0 unless given). 400 `business_name is required` / `tin is required` / `customer type not found` |
+| **`POST v1/system/users`** (mock only) | back-office | `{name, phone, telegram_id?}` | 201, an ordinary app user. 400 `user with this phone already exists`. **The real Admin has no such call**: people sign up in the ChipChip app. It exists so the test can run the whole sign-up |
 | `GET v1/order/group` | shopper | `?page=&per_page=&sort={"field":"o.updated_at","order":"desc"}` | one row per product, `status: PENDING`, `meta_data.total` |
 
 **Matching the two systems:** a company in Admin and its customer in B2B carry the same TIN (`tin` / `tin_number`).
@@ -131,6 +138,20 @@ override → customer type → `pricing_settings.tax_rate`) and delivery fee its
 | `POST /api/agent/inbox/{id}/reply` | `{text}`: the bot asks the customer; their answer joins the same order. |
 | `POST /api/agent/inbox/{id}/status` | `{status: proposed\|rejected\|collecting\|asked\|created, note, tell_customer, b2b_order_number, admin_bill_id}`. After placing the order through the two systems' APIs, the agent sets `created` with the references and the confirmation text in `tell_customer`. |
 | `GET /api/agent/settings` | Simenesh's answers to the four questions. |
+| `GET /api/agent/signups` | Sign-ups waiting for Simenesh: `{id, phone, telegram_name, business_name, business_type, tin, address, latitude, longitude, status, waiting_orders, ...}`. `?status=all`: the latest 30. |
+| `POST /api/agent/signups/{id}/status` | `{status: registered\|declined, note, tell_customer, b2b_customer_id, admin_company_id, admin_user_id}` (`registered` needs the last two). Registered: the person is linked in the bot and the orders they sent while waiting go to the inbox at once. 409 when it is not waiting. |
+
+**Signing up a new customer** (after Simenesh's yes), the agent:
+1. B2B: `GET /rest/v1/customers?phone=eq.<+251…>` (or `tin_number`); if none, `POST /rest/v1/customers` with `name, email`
+   (`<phone digits>@telegram-user.auto` when they gave none, as B2B's own Telegram sign-up does), `phone, customer_type_id,
+   address, latitude, longitude, tin_number, is_active: true, approval_status: "approved", source: "telegram"`.
+2. Admin (back office): find the person (`GET /system/users/<phone>`); in the mock, create them if missing
+   (`POST /system/users`); create the company (`POST /system/b2b-customers`, same TIN as B2B) and link the person
+   (`POST /system/b2b-customers/<id>/users`, role `ADMIN`), and the ordering login too (`MEMBER`).
+3. Admin (ordering login): `POST /locations` with the place, so orders can be delivered there.
+4. `POST /api/agent/signups/<id>/status` `registered` with the three ids: the bot tells the customer and their order continues.
+
+At go-live the real Admin has no "create user" call: a new customer installs the ChipChip app first, then step 2 links them.
 
 The old `/api/orders`, `/api/agent/preview`, `/api/agent/companies` and `/api/agent/products` are gone: the agent
 reads and writes through the fake systems' own APIs instead.

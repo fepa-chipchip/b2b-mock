@@ -17,7 +17,8 @@ export async function GET(req: Request) {
   const denied = agentOnly(req);
   if (denied) return denied;
   const all = new URL(req.url).searchParams.get("status") === "all";
-  let q = db().from("inbox").select("*").order("id", { ascending: false }).limit(30);
+  // waiting_signup: sent by someone whose sign-up Simenesh has not approved yet (no company); see /api/agent/signups.
+  let q = db().from("inbox").select("*").neq("status", "waiting_signup").order("id", { ascending: false }).limit(30);
   if (!all) q = q.eq("status", "collecting").not("company_id", "is", null)
     .lte("last_message_at", new Date(Date.now() - QUIET_SECONDS * 1000).toISOString());
   const rows = must(await q) as any[];
