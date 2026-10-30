@@ -1,7 +1,9 @@
 "use client";
 import { usePathname } from "next/navigation";
-import { ShoppingCart, Inbox, HelpCircle, Users, Building2 } from "lucide-react";
+import { ShoppingCart, HelpCircle, Users, Building2 } from "lucide-react";
 
+// "Received" (the order bot's inbox, /received) is left out on purpose: it is our own check, not a page Simenesh
+// knows from ChipChip B2B, so the tester only sees the two copied systems and the four questions.
 const SECTIONS = [
   {
     title: "ChipChip B2B",
@@ -15,10 +17,6 @@ const SECTIONS = [
     items: [{ href: "/admin/dashboard/b2b", label: "B2B Customers", am: "ድርጅቶች", icon: Building2 }],
   },
   {
-    title: "Order bot",
-    items: [{ href: "/received", label: "Received", am: "የደረሱ", icon: Inbox }],
-  },
-  {
     title: "",
     items: [{ href: "/questions", label: "4 questions", am: "4 ጥያቄዎች", icon: HelpCircle }],
   },
@@ -27,7 +25,7 @@ const ITEMS = SECTIONS.flatMap((s) => s.items);
 
 const isActive = (path: string, href: string) => path === href || path.startsWith(href + "/");
 
-/** The left menu: the two copied systems, then the order bot, then the four questions. */
+/** The left menu: the two copied systems, then the four questions. */
 export function SideNav() {
   const path = usePathname() || "/";
   return (
@@ -57,7 +55,7 @@ export function SideNav() {
 export function MobileNav() {
   const path = usePathname() || "/";
   return (
-    <nav className="md:hidden grid grid-cols-5 bg-white border-b border-gray-200">
+    <nav className="md:hidden grid grid-cols-4 bg-white border-b border-gray-200">
       {ITEMS.map(({ href, label, am, icon: Icon }) => {
         const on = isActive(path, href);
         return (
