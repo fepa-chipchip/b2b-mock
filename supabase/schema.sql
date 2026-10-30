@@ -440,6 +440,7 @@ insert into adm_b2b_customers (id, business_name, tin, phone, credit_limit, paym
 
 insert into adm_users (id, name, phone, is_system) values
   (md5('adm-user-agent')::uuid,    'Zeami order agent (test)', '251900000099', true),
+  (md5('adm-user-ordering')::uuid, 'Zeami ordering (test)',    '251900000098', false),
   (md5('adm-user-simenesh')::uuid, 'Simenesh (test)',          '251900000009', false),
   (md5('adm-user-selam')::uuid,    'Selam (test)',             '251900000001', false),
   (md5('adm-user-dawit')::uuid,    'Dawit (test)',             '251900000002', false),
@@ -454,7 +455,12 @@ insert into adm_b2b_customer_users (b2b_customer_id, user_id, role) values
   (md5('adm-co-abay')::uuid,   md5('adm-user-selam')::uuid,    'MEMBER'),
   (md5('adm-co-entoto')::uuid, md5('adm-user-selam')::uuid,    'MEMBER'),
   (md5('adm-co-sheger')::uuid, md5('adm-user-dawit')::uuid,    'MEMBER'),
-  (md5('adm-co-bole')::uuid,   md5('adm-user-hana')::uuid,     'MEMBER');
+  (md5('adm-co-bole')::uuid,   md5('adm-user-hana')::uuid,     'MEMBER'),
+  -- The agent's ordering login: an ordinary app user, MEMBER of every company, ordering with its own token.
+  (md5('adm-co-abay')::uuid,   md5('adm-user-ordering')::uuid, 'MEMBER'),
+  (md5('adm-co-entoto')::uuid, md5('adm-user-ordering')::uuid, 'MEMBER'),
+  (md5('adm-co-sheger')::uuid, md5('adm-user-ordering')::uuid, 'MEMBER'),
+  (md5('adm-co-bole')::uuid,   md5('adm-user-ordering')::uuid, 'MEMBER');
 
 insert into adm_products (id, name, measuring_unit, current_unit_price)
   select md5('adm-product-' || n)::uuid, name, unit, deal_price from seed_products;
@@ -480,6 +486,13 @@ insert into adm_locations (user_id, name, location_title, contact_phone) values
   (md5('adm-user-selam')::uuid,    'Entoto View Hotel, kitchen back door',     'Entoto back', '251900000102'),
   (md5('adm-user-dawit')::uuid,    'Sheger Pharma PLC, Akaki factory canteen', 'Sheger',      '251900000103'),
   (md5('adm-user-hana')::uuid,     'Bole Burger House, Bole Medhanialem',      'Bole Burger', '251900000104');
+-- The ordering login has Simenesh's locations (fixed ids, so supabase/add_ordering_user.sql can re-run safely).
+insert into adm_locations (id, user_id, name, location_title, contact_phone) values
+  (md5('adm-loc-ordering-abay')::uuid,        md5('adm-user-ordering')::uuid, 'Abay Bar & Restaurant, Kazanchis',         'Abay',        '251900000101'),
+  (md5('adm-loc-ordering-entoto')::uuid,      md5('adm-user-ordering')::uuid, 'Entoto View Hotel, Africa Avenue',         'Entoto',      '251900000102'),
+  (md5('adm-loc-ordering-entoto-back')::uuid, md5('adm-user-ordering')::uuid, 'Entoto View Hotel, kitchen back door',     'Entoto back', '251900000102'),
+  (md5('adm-loc-ordering-sheger')::uuid,      md5('adm-user-ordering')::uuid, 'Sheger Pharma PLC, Akaki factory canteen', 'Sheger',      '251900000103'),
+  (md5('adm-loc-ordering-bole')::uuid,        md5('adm-user-ordering')::uuid, 'Bole Burger House, Bole Medhanialem',      'Bole Burger', '251900000104');
 
 drop table seed_products;
 
@@ -489,7 +502,8 @@ drop table seed_products;
 --                 where system = 'b2b' and login = 'order-agent@mock.chipchip.test';
 insert into mock_accounts (system, login, password_sha256, user_id) values
   ('b2b',   'order-agent@mock.chipchip.test', '4a63bd85efe0c5122a6b9a81ad706cc20999b4774735fde42827792fe6790adf', md5('b2b-profile-agent')::uuid),
-  ('admin', '251900000099',                   'ee75b2d15249ae4da4474b94268f292001258f2c779f8ac044c2bf428dababce', md5('adm-user-agent')::uuid);
+  ('admin', '251900000099',                   'ee75b2d15249ae4da4474b94268f292001258f2c779f8ac044c2bf428dababce', md5('adm-user-agent')::uuid),
+  ('admin', '251900000098',                   '9b9f1eff0a6300cfde705896866ab52a2ac2ad8a269c5e954a8605a6e1da9181', md5('adm-user-ordering')::uuid);
 
 -- ---------------------------------------------------------------- the four questions (answers are for the agent)
 insert into settings (key, value) values

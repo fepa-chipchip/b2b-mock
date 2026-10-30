@@ -47,9 +47,16 @@ catalogue; prices are samples.
 |---|---|---|
 | B2B (`POST /b2b/auth/v1/token?grant_type=password`, header `apikey: mock-b2b-publishable-key`) | `order-agent@mock.chipchip.test` | `mock-b2b-agent-test` |
 | Admin (`POST /admin-api/v1/users/login`) | phone `251900000099` | `mock-admin-agent-test` |
+| Admin ordering, test account (`POST /admin-api/v1/users/login`) | phone `251900000098` | `mock-admin-ordering-test` |
 
 `mock-b2b-publishable-key` is the fake B2B's public anon key (the real one is public too, hardcoded in the B2B app).
-The Admin login is a back-office account (it may call `/system/*`). Simenesh's Admin user is `251900000009`, linked to
+**Two Admin logins:** back office `251900000099` ("Zeami order agent (test)", `is_system`) for `/system/*` (companies,
+linked users, statements, user lookups); ordering `251900000098` ("Zeami ordering (test)", an ordinary app user, MEMBER
+of all 4 companies with Simenesh's delivery locations) for placing orders: cart, bill, locations, payment methods,
+`multiple-group` and order history with its own login token, no impersonation. Checkout charges `b2b_customer_id` only
+when that user is linked to it (else 400 `"user is not linked to this b2b customer"`). To add it to a live database
+without wiping test data, run `supabase/add_ordering_user.sql` (safe to re-run) instead of `schema.sql`.
+Simenesh's Admin user is `251900000009`, linked to
 every company, with every company's delivery locations, as in reality.
 
 ## Real call → mock call

@@ -8,8 +8,10 @@ export const dynamic = "force-dynamic";
 /**
  * The fake ChipChip Admin API. Real base URLs: https://ccapi.chipchip.social/v1/ and /v2/ ; here /admin-api/v1/ and /admin-api/v2/.
  * Envelope as the Admin front end reads it: { ok: true, data, meta_data? } or { ok: false, error: { message } }.
- * Tokens: POST v1/users/login gives a back-office token (for /system/*); /system/users lookups by phone or Telegram id
- * hand out a shopper token (by id the token is "", as on the real API). Shopper calls use the shopper's token.
+ * Tokens: POST v1/users/login gives the user's own token: /system/* only for a back-office user (is_system), the shopper
+ * calls for anyone, acting as that user (as the real Admin does for a logged-in app user). /system/users lookups by phone
+ * or Telegram id hand out a shopper token (by id the token is "", as on the real API). Checkout charges the company in
+ * b2b_customer_id only when the token's user is linked to it.
  */
 
 const okJson = (data: unknown, meta?: Record<string, unknown>, status = 200) =>
