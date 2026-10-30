@@ -53,7 +53,7 @@ const QUESTIONS = [
   },
 ];
 
-/** The four open questions, answered as settings the test then follows. */
+/** The four open questions. The answers are for the agent (GET /api/agent/settings); the fake systems behave like the real ones. */
 export default async function Questions() {
   const rows = must(await db().from("settings").select("*")) as any[];
   const fb = must(await db().from("feedback").select("*").or("about.like.setting:%,about.eq.general").order("id")) as any[];
@@ -64,8 +64,10 @@ export default async function Questions() {
         <h2 className="page-title">4 questions</h2>
         <div className="am">4 ጥያቄዎች</div>
         <p className="page-sub">
-          Pick the answer that matches how you work. The test follows it at once: send a new order and look at the result. ·
-          እንደ ስራዎ ትክክለኛውን መልስ ይምረጡ። ሙከራው ወዲያውኑ ይከተለዋል፤ አዲስ ትዕዛዝ ልከው ውጤቱን ይመልከቱ።
+          Pick the answer that matches how you work. The order agent reads it before every order. The two test systems do not
+          change with your answers: like the real ones, B2B blocks a customer with overdue or too much unpaid credit, and
+          Admin refuses an order the company wallet cannot cover. ·
+          እንደ ስራዎ ትክክለኛውን መልስ ይምረጡ። ወኪሉ ከእያንዳንዱ ትዕዛዝ በፊት ያነበዋል። ሁለቱ የሙከራ ስርዓቶች እንደ እውነተኞቹ ይሰራሉ።
         </p>
       </div>
       {QUESTIONS.map((q, n) => {

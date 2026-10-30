@@ -1,4 +1,5 @@
 "use server";
+import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { db, must, normPhone } from "@/lib/db";
 
@@ -23,17 +24,31 @@ export async function saveAnswer(form: FormData) {
   revalidatePath("/", "layout");
 }
 
-/** A test person who may order for one or more companies (their phone links their Telegram the first time). */
-export async function addPerson(form: FormData) {
+/**
+ * Mock-only: a tester with their real Telegram phone becomes a user of the fake Admin, linked to one company
+ * (in reality the person registers in the ChipChip app and is linked on the company page). Also gives them a saved
+ * delivery location copied from Simenesh's location for that company, so Place Order works as them.
+ */
+export async function addTester(form: FormData) {
   const name = String(form.get("name") || "").trim();
   const phone = normPhone(String(form.get("phone") || ""));
-  const companies = form.getAll("company").map(Number).filter(Boolean);
-  if (!name || phone.length < 12 || companies.length === 0) return;
-  const staff = must(await db().from("staff").upsert({ name, phone, usual_company_id: companies[0] }, { onConflict: "phone" })
-    .select("id").single()) as { id: number };
-  must(await db().from("staff_companies").delete().eq("staff_id", staff.id).select("staff_id"));
-  must(await db().from("staff_companies").insert(companies.map((company_id) => ({ staff_id: staff.id, company_id }))).select("staff_id"));
-  revalidatePath("/customers");
+  const companyId = String(form.get("company") || "");
+  if (!name || phone.length < 12 || !companyId) return;
+  const existing = must(await db().from("adm_users").select("id").eq("phone", phone).maybeSingle()) as { id: string } | null;
+  const userId = existing?.id ?? randomUUID();
+  if (!existing) must(await db().from("adm_users").insert({ id: userId, name, phone }).select("id"));
+  must(await db().from("adm_b2b_customer_users").upsert({ b2b_customer_id: companyId, user_id: userId, role: "MEMBER" },
+    { onConflict: "b2b_customer_id,user_id" }).select("id"));
+  const company = must(await db().from("adm_b2b_customers").select("phone").eq("id", companyId).single()) as { phone: string };
+  const simenesh = must(await db().from("adm_users").select("id").eq("phone", "251900000009").maybeSingle()) as { id: string } | null;
+  if (simenesh) {
+    const locs = must(await db().from("adm_locations").select("name,location_title,contact_phone").eq("user_id", simenesh.id)
+      .eq("contact_phone", company.phone)) as any[];
+    const mine = must(await db().from("adm_locations").select("name").eq("user_id", userId)) as { name: string }[];
+    const add = locs.filter((l) => !mine.some((m) => m.name === l.name)).map((l) => ({ ...l, user_id: userId }));
+    if (add.length) must(await db().from("adm_locations").insert(add).select("id"));
+  }
+  revalidatePath("/", "layout");
 }
 
 /** Points the order bot at this site (run once after deploy, and after the bot token changes). */
@@ -46,5 +61,5 @@ export async function connectBot(form: FormData) {
   });
   const j = await r.json().catch(() => ({}));
   must(await db().from("feedback").insert({ about: "setup", ok: !!j.ok, comment: `setWebhook: ${j.description || r.status}` }).select("id"));
-  revalidatePath("/customers");
+  revalidatePath("/received");
 }

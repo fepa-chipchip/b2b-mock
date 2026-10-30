@@ -6,7 +6,7 @@ import "./globals.css";
 export const metadata = { title: "B2B Orders Test", description: "Test site for the B2B order agent (staging)" };
 export const viewport = { width: "device-width", initialScale: 1 };
 
-/** The ChipChip B2B dashboard shell: white left sidebar, white top bar, grey page. */
+/** The ChipChip B2B dashboard shell (white left sidebar, white top bar, grey page), holding both copied systems. */
 export default function Root({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
@@ -17,7 +17,7 @@ export default function Root({ children }: { children: ReactNode }) {
               <div className="w-6 h-6 bg-red-600 rounded-md flex items-center justify-center">
                 <span className="text-white font-bold text-xs">CC</span>
               </div>
-              <h1 className="text-xl font-bold text-gray-900">ChipChip B2B</h1>
+              <h1 className="text-xl font-bold text-gray-900">ChipChip <span className="text-sm font-medium text-gray-500">test copy</span></h1>
             </div>
             <SideNav />
             <div className="p-4 border-t border-gray-100 text-xs text-gray-500">Test site · የሙከራ ገጽ</div>
@@ -30,7 +30,7 @@ export default function Root({ children }: { children: ReactNode }) {
                   <div className="md:hidden w-6 h-6 bg-red-600 rounded-md flex items-center justify-center flex-shrink-0">
                     <span className="text-white font-bold text-xs">CC</span>
                   </div>
-                  <span className="md:hidden font-bold text-gray-900 truncate">ChipChip B2B</span>
+                  <span className="md:hidden font-bold text-gray-900 truncate">ChipChip test copy</span>
                   <span className="badge bg-amber-100 text-amber-800">Test · ሙከራ</span>
                 </div>
                 <div className="flex items-center gap-3 md:gap-4">

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db, must, getSettings, normPhone, BUCKET } from "@/lib/db";
+import { companiesForPhone } from "@/lib/admin";
 import { send, tg, download, SAY } from "@/lib/tg";
 
 export const dynamic = "force-dynamic";
@@ -7,17 +8,16 @@ export const dynamic = "force-dynamic";
 /** Messages a customer sends within this many minutes of the previous one belong to the same order. */
 const SAME_ORDER_MINUTES = 10;
 
-type Staff = { id: number; name: string; telegram_id: number | null; usual_company_id: number | null };
+/**
+ * The order bot. A customer's staff member is a LINKED USER of their company in ChipChip Admin: the bot matches the
+ * phone number they share through Telegram against Admin's linked users (in the mock: the fake Admin's tables; at
+ * go-live: the real Admin's linked users).
+ */
 
 const askPhone = (chat: number, text: string) =>
   send(chat, text, {
     reply_markup: { keyboard: [[{ text: SAY.share_button, request_contact: true }]], resize_keyboard: true, one_time_keyboard: true },
   });
-
-async function companiesOf(staffId: number) {
-  const links = must(await db().from("staff_companies").select("company_id, companies(id,name)").eq("staff_id", staffId)) as any[];
-  return links.map((l) => l.companies as { id: number; name: string });
-}
 
 export async function POST(req: Request) {
   if (req.headers.get("x-telegram-bot-api-secret-token") !== process.env.TELEGRAM_WEBHOOK_SECRET)
@@ -39,19 +39,21 @@ async function onMessage(m: any) {
   if (m.contact) {
     if (m.contact.user_id && m.contact.user_id !== m.from.id) return askPhone(chat, SAY.need_phone);
     const phone = normPhone(m.contact.phone_number);
-    const staff = must(await db().from("staff").select("*").eq("phone", phone).maybeSingle()) as Staff | null;
-    if (!staff) {
-      must(await db().from("inbox").insert({ telegram_chat_id: chat, sender_name: senderName(m), status: "unknown_sender",
-        agent_note: `Shared phone ${phone}; not a known business customer.` }).select("id"));
+    const { user, companies } = await companiesForPhone(phone);
+    if (!user || companies.length === 0) {
+      must(await db().from("inbox").insert({ telegram_chat_id: chat, sender_phone: phone, sender_name: senderName(m), status: "unknown_sender",
+        agent_note: `Shared phone ${phone}; not a linked user of any company in Admin.` }).select("id"));
       return send(chat, SAY.unknown_phone, { reply_markup: { remove_keyboard: true } });
     }
-    must(await db().from("staff").update({ telegram_id: m.from.id, telegram_name: senderName(m) }).eq("id", staff.id).select("id"));
-    const cos = await companiesOf(staff.id);
-    return send(chat, SAY.linked(cos.map((c) => c.name).join(", ") || "-"), { reply_markup: { remove_keyboard: true } });
+    must(await db().from("bot_contacts").upsert({ telegram_id: m.from.id, phone, telegram_name: senderName(m), linked_at: new Date().toISOString() })
+      .select("telegram_id"));
+    return send(chat, SAY.linked(companies.map((c) => c.business_name).join(", ")), { reply_markup: { remove_keyboard: true } });
   }
 
-  const staff = must(await db().from("staff").select("*").eq("telegram_id", m.from.id).maybeSingle()) as Staff | null;
-  if (!staff) return askPhone(chat, SAY.need_phone);
+  const contact = must(await db().from("bot_contacts").select("*").eq("telegram_id", m.from.id).maybeSingle()) as { phone: string } | null;
+  if (!contact) return askPhone(chat, SAY.need_phone);
+  const { user, companies } = await companiesForPhone(contact.phone);
+  if (!user || companies.length === 0) return send(chat, SAY.unknown_phone);
 
   // The order this message belongs to: the sender's open one if recent, one we asked them about today
   // (this is their answer), else a new one.
@@ -64,17 +66,21 @@ async function onMessage(m: any) {
   if (inbox?.status === "asked")
     must(await db().from("inbox").update({ status: "collecting" }).eq("id", inbox.id).select("id"));
   if (isNew) {
-    const cos = await companiesOf(staff.id);
     const s = await getSettings();
-    let company_id: number | null = null;
+    let company_id: string | null = null;
     let status = "collecting";
-    if (cos.length === 1) company_id = cos[0].id;
-    else if (cos.length > 1 && s.q4_several === "usual" && staff.usual_company_id) company_id = staff.usual_company_id;
-    else if (cos.length > 1) status = "waiting_company";
-    inbox = must(await db().from("inbox").insert({ telegram_chat_id: chat, staff_id: staff.id, sender_name: staff.name,
-      company_id, status }).select("*").single());
+    if (companies.length === 1) company_id = companies[0].id;
+    else if (s.q4_several === "usual") {
+      // "Their usual company": the one their last order went to, while it is still one of theirs.
+      const last = must(await db().from("inbox").select("company_id").eq("sender_phone", contact.phone).not("company_id", "is", null)
+        .order("id", { ascending: false }).limit(1)) as { company_id: string }[];
+      if (last[0] && companies.some((c) => c.id === last[0].company_id)) company_id = last[0].company_id;
+    }
+    if (!company_id && companies.length > 1) status = "waiting_company";
+    inbox = must(await db().from("inbox").insert({ telegram_chat_id: chat, sender_phone: contact.phone, sender_name: user.name,
+      admin_user_id: user.id, company_id, status }).select("*").single());
     if (status === "waiting_company")
-      await send(chat, SAY.which_company, { reply_markup: { inline_keyboard: cos.map((c) => [{ text: c.name, callback_data: `co:${inbox.id}:${c.id}` }]) } });
+      await send(chat, SAY.which_company, { reply_markup: { inline_keyboard: companies.map((c) => [{ text: c.business_name, callback_data: `co:${inbox.id}:${c.id}` }]) } });
   }
 
   await saveMessage(inbox.id, m);
@@ -105,11 +111,11 @@ async function saveMessage(inboxId: number, m: any) {
 async function onButton(q: any) {
   const [tag, inboxId, companyId] = String(q.data || "").split(":");
   if (tag !== "co") return tg("answerCallbackQuery", { callback_query_id: q.id });
-  const co = must(await db().from("companies").select("name").eq("id", Number(companyId)).maybeSingle()) as { name: string } | null;
-  must(await db().from("inbox").update({ company_id: Number(companyId), status: "collecting", last_message_at: new Date().toISOString() })
+  const co = must(await db().from("adm_b2b_customers").select("business_name").eq("id", companyId).maybeSingle()) as { business_name: string } | null;
+  must(await db().from("inbox").update({ company_id: companyId, status: "collecting", last_message_at: new Date().toISOString() })
     .eq("id", Number(inboxId)).eq("status", "waiting_company").select("id"));
-  await tg("answerCallbackQuery", { callback_query_id: q.id, text: co?.name || "" });
-  if (q.message) await tg("editMessageText", { chat_id: q.message.chat.id, message_id: q.message.message_id, text: SAY.company_set(co?.name || "") });
+  await tg("answerCallbackQuery", { callback_query_id: q.id, text: co?.business_name || "" });
+  if (q.message) await tg("editMessageText", { chat_id: q.message.chat.id, message_id: q.message.message_id, text: SAY.company_set(co?.business_name || "") });
 }
 
 const senderName = (m: any) => [m.from?.first_name, m.from?.last_name].filter(Boolean).join(" ") || m.from?.username || "";
