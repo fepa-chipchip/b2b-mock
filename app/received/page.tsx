@@ -58,7 +58,7 @@ export default async function Received() {
           </div>
           <div className="text-sm text-gray-500 mt-1">
             {new Date(r.created_at).toLocaleString("en-GB", { timeZone: "Africa/Addis_Ababa" })}
-            {r.sender_phone ? ` · +${r.sender_phone}` : ""}{r.company_id ? ` · company ${r.company_id.slice(0, 8)}` : ""}{r.agent_note ? ` · ${r.agent_note}` : ""}
+            {r.sender_phone ? ` · +${r.sender_phone}` : ""}{r.telegram_chat_id ? ` · Telegram ${r.telegram_chat_id}` : ""}{r.company_id ? ` · company ${r.company_id.slice(0, 8)}` : ""}{r.agent_note ? ` · ${r.agent_note}` : ""}
           </div>
           {(r.b2b_order_number || r.admin_bill_id) && (
             <div className="text-sm text-gray-700 mt-1">

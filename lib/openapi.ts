@@ -111,7 +111,7 @@ export function agentSpec(host: string) {
         get: {
           operationId: "list_orders",
           summary: "Orders customers sent that are ready to prepare",
-          description: "Ready = sender quiet 90 s. status=all lists the latest 30 in any state. Each has sender {name, phone, telegram_name} and its messages (text, or a photo/file with a one-hour file_url).",
+          description: "Ready = sender quiet 90 s. status=all lists the latest 30 in any state. Each has sender {name, phone, telegram_id, telegram_name} and its messages (text, or a photo/file with a one-hour file_url).",
           parameters: [{ name: "status", in: "query", schema: str("all for every state") }],
           responses: okJson("{orders: [...]}"),
         },

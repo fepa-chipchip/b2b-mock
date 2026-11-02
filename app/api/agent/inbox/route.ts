@@ -10,8 +10,9 @@ const QUIET_SECONDS = 90;
  * GET /api/agent/inbox            orders customers sent that are ready to prepare (read-only)
  * GET /api/agent/inbox?status=all the latest 30 in any state
  * Each comes with its messages; a photo or file has a link valid for one hour (`file_url`) the agent can read.
- * The bot knows only the sender's phone and Telegram name: `sender {name, phone, telegram_name}`. Who they are in
- * ChipChip Admin, and which company the order is for, is the agent's to find out (Admin: /system/users/<phone>);
+ * The bot knows only the sender's phone, Telegram id and Telegram name: `sender {name, phone, telegram_id, telegram_name}`
+ * (in a private chat the chat id is the sender's Telegram id). Who they are in ChipChip Admin, and which company the
+ * order is for, is the agent's to find out (Admin: /system/users/telegram/<telegram_id>, else /system/users/<phone>);
  * it records them with POST /api/agent/inbox/{id}/status `{company_id, admin_user_id}` (null until then).
  * Not a customer yet: POST /api/agent/inbox/{id}/signup.
  */
@@ -42,7 +43,7 @@ export async function GET(req: Request) {
     }
     out.push({
       inbox_id: r.id, status: r.status,
-      sender: { name: r.sender_name, phone: r.sender_phone,
+      sender: { name: r.sender_name, phone: r.sender_phone, telegram_id: r.telegram_chat_id ? String(r.telegram_chat_id) : null,
         telegram_name: contacts.find((c) => c.phone === r.sender_phone)?.telegram_name ?? null },
       company_id: r.company_id, admin_user_id: r.admin_user_id,
       received_at: r.created_at, last_message_at: r.last_message_at, note: r.agent_note,
