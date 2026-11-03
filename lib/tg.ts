@@ -73,7 +73,7 @@ export const SAY = {
   need_phone:
     "Please share your phone number first with the button below.\n\nእባክዎ መጀመሪያ ከታች ባለው ቁልፍ ስልክ ቁጥርዎን ያጋሩ።",
   received:
-    "Received ✅ We will send you the order to confirm shortly.\n\nደርሶናል ✅ ትዕዛዙን በቅርቡ እንልክልዎታለን።",
+    "Received ✅ We'll send your confirmation here once your order is placed.\n\nደርሶናል ✅ ትዕዛዝዎ ሲመዘገብ ማረጋገጫውን እዚሁ እንልክልዎታለን።",
   company_set: (name: string) => `Noted: ${name}.\n\nተመዝግቧል፦ ${name}።`,
   created: (id: number, total: string, date: string) =>
     `Your order #${id} is confirmed: ${total} ETB, delivery ${date}. Thank you!\n\n` +
