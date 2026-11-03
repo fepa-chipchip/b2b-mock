@@ -2,13 +2,24 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
 
 let client: SupabaseClient | null = null;
 
-/** The server's own client (service role). Never sent to a browser. */
+/**
+ * The server's own client (service role). Never sent to a browser.
+ *
+ * Every request it makes is `cache: "no-store"`. supabase-js reads through `fetch`, and Next 14 keeps the answer of a
+ * GET fetch in its data cache even on a `force-dynamic` route: on 3 Nov 2026 the agent's order list kept answering
+ * the same two orders after both were rejected and a new one had arrived (Vercel said BYPASS; the function itself
+ * served the old rows). The B2B copy's REST reads go through this client too, so a credit or a duplicate-order check
+ * would have read the same stale rows.
+ */
 export function db(): SupabaseClient {
   if (!client) {
     const url = process.env.SUPABASE_URL;
     const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !key) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set");
-    client = createClient(url, key, { auth: { persistSession: false } });
+    client = createClient(url, key, {
+      auth: { persistSession: false },
+      global: { fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }) },
+    });
   }
   return client;
 }
