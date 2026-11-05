@@ -1,5 +1,6 @@
 import { db, must } from "@/lib/db";
 import { send, SAY } from "@/lib/tg";
+import { notifyZeami, signupCompletedEvent, zeamiOn } from "@/lib/zeami";
 
 /* ---------- New-customer sign-up (shared by the order bot and the agent API) ----------
  * The order agent decides a sender is not a customer yet and starts a sign-up (POST /api/agent/inbox/{id}/signup).
@@ -21,6 +22,25 @@ export async function openSignup(telegramId: number): Promise<Signup | null> {
 
 export async function saveSignup(id: number, fields: Partial<Signup> & { latitude?: number | null; longitude?: number | null }) {
   must(await db().from("bot_signups").update({ ...fields, updated_at: new Date().toISOString() }).eq("id", id).select("id"));
+}
+
+/**
+ * The sign-up just moved from collecting to waiting_approval (its last answer is in): tells Zeami, so the agent asks
+ * Simenesh now rather than on its next look (`signup_completed`, lib/zeami.ts). The order kept for it is the sender's
+ * latest waiting_signup row (POST /api/agent/inbox/{id}/signup set it), sent as inbox_id when there is one.
+ * Call it after the bot's own reply to the customer. Never throws; ZEAMI_HOOK_URL unset: does nothing.
+ */
+export async function notifySignupCompleted(s: Signup) {
+  if (!zeamiOn()) return;
+  let inboxId: number | null = null;
+  try {
+    const row = must(await db().from("inbox").select("id").eq("telegram_chat_id", s.telegram_chat_id).eq("status", "waiting_signup")
+      .order("id", { ascending: false }).limit(1).maybeSingle()) as { id: number } | null;
+    inboxId = row?.id ?? null;
+  } catch (e) {
+    console.log("sign-up order lookup failed", (e as Error).message);
+  }
+  await notifyZeami(signupCompletedEvent(s.id, inboxId));
 }
 
 /** Asks the sign-up's current question (or, once all are answered, says it is waiting for Simenesh). */

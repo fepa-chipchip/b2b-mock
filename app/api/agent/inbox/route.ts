@@ -1,10 +1,8 @@
 import { db, must, BUCKET } from "@/lib/db";
 import { agentOnly, ok } from "@/lib/auth";
+import { QUIET_SECONDS } from "@/lib/readyOrders";
 
 export const dynamic = "force-dynamic";
-
-/** An order is ready once its sender has been quiet this long (they often send a list, then a photo, then a note). */
-const QUIET_SECONDS = 90;
 
 /**
  * GET /api/agent/inbox            orders customers sent that are ready to prepare (read-only)

@@ -26,7 +26,7 @@ catalogue; prices are samples.
 1. **Supabase** → SQL Editor → paste `supabase/schema.sql` → Run. **Re-running it wipes all test data** (orders, carts,
    messages, testers added on the Received page) and puts the sample data back.
 2. **Bot**: @BotFather → `/newbot` → keep the token.
-3. **Vercel** environment variables (unchanged, no new ones):
+3. **Vercel** environment variables:
 
    | Variable | What |
    |---|---|
@@ -36,6 +36,8 @@ catalogue; prices are samples.
    | `TELEGRAM_WEBHOOK_SECRET` | any long random string |
    | `AGENT_TOKEN` | any long random string: the agent's key for `/api/agent/*` |
    | `UI_PASSWORD` | the password of the pages |
+   | `ZEAMI_HOOK_URL` | optional: the agent's Zeami event link `https://<zeami-host>/hooks/<token>` (see *Telling Zeami*) |
+   | `CRON_SECRET` | optional, with `ZEAMI_HOOK_URL`: any long random string, the key of `/api/cron/order-ready` |
 
 4. Open the site → **Received** → *Order bot connection* → **Connect the bot**.
 5. Testers open the bot, press Start and share their number. To order for a company they must be a linked user of it in
@@ -160,6 +162,44 @@ At go-live the real Admin has no "create user" call: a new customer installs the
 The old `/api/orders`, `/api/agent/preview`, `/api/agent/companies` and `/api/agent/products` are gone: the agent
 reads and writes through the fake systems' own APIs instead.
 
+## Telling Zeami (optional)
+
+With `ZEAMI_HOOK_URL` set, the app starts the order agent in Zeami when it has work, by POSTing a small JSON body to
+the agent's event link. Unset, it sends nothing (local runs and copies without it are unaffected). Bodies carry ids
+only; Zeami dedupes by `event_id`.
+
+| Event | When | Body |
+|---|---|---|
+| Sign-up completed | the customer's last sign-up answer is in (`collecting` → `waiting_approval`) | `{"event":"signup_completed","signup_id":7,"inbox_id":41,"event_id":"signup-7-completed"}` (`inbox_id`: the order kept for it, left out when there is none) |
+| Order ready | an order is `collecting` and its sender has been quiet 90 s (the same rule as `GET /api/agent/inbox`) | `{"event":"order_ready","inbox_id":41,"event_id":"order-41-ready"}`; when the customer writes again after that (answers the agent's question, adds an item) and goes quiet again: `order-41-ready-2`, `-3`, ... |
+
+Each POST waits 5 s at most and is tried once more on a timeout, a network error or a 5xx; it never holds up or breaks
+the bot's reply to the customer. A failure is logged with the event id only (the link holds the token).
+
+"Ready" needs a clock and Vercel has none, so two things look for orders that went quiet:
+- **every minute**, Supabase's pg_cron calls `GET /api/cron/order-ready` (`Authorization: Bearer <CRON_SECRET>`)
+  through pg_net. Vercel's own cron runs at most once a day on the Hobby plan (and a per-minute schedule there fails
+  the deploy), so the timer lives in Supabase, which allows it on every plan. On a paid Vercel plan a Vercel Cron job
+  on the same path works too: it sends the same header by itself.
+- **on every incoming bot message**, the webhook checks as well (cheap; it covers a stopped job while customers write).
+
+An order is announced once per round: `claim_ready_orders()` hands it to one caller only and `finish_ready_order()`
+records it once Zeami answered 2xx. One Zeami did not take is tried again on the next minute with the same event id,
+for up to a day after its last message; a 4xx other than 408/429 (unknown link, agent switched off) is not retried
+within the call. An order is announced 90 s to about 2.5 minutes after its last message (sooner when someone else
+writes to the bot meanwhile).
+
+Set up (once):
+1. Supabase → SQL Editor → run `supabase/add_zeami_notify.sql` (live database; `schema.sql` carries the same). Orders
+   already in the database are not announced.
+2. Vercel → the project → Settings → Environment Variables (Production): `ZEAMI_HOOK_URL` and `CRON_SECRET` → redeploy.
+3. Supabase → SQL Editor → `supabase/order_ready_cron.sql` with `<APP_URL>` and `<CRON_SECRET>` filled in (kept in
+   Vault). It shows how to check the job's runs and how to stop it.
+4. `GET /api/health` shows `zeami_hook_shape: ok`.
+
+Not sent again: a `signup_completed` whose two tries both failed (the agent still finds the sign-up in
+`GET /api/agent/signups`).
+
 ## What is left out, and what differs from the real systems
 
 Left out (not needed for ordering): B2B Edit Order, Add Discount, Payment Evidence, Mark as Delivered, Cancel Order,
@@ -184,3 +224,6 @@ Differences to know:
 
 `npm install`, a `.env.local` with the variables, `npm run dev`. Telegram needs a public https address for the webhook,
 so the bot itself is tested on the deployed site.
+
+`npm test` (Node 22.18 or later): the Zeami notice helper, and the "ready" functions run on an in-process Postgres
+(PGlite) from `supabase/add_zeami_notify.sql` and `supabase/schema.sql`.

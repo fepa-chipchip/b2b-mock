@@ -357,8 +357,14 @@ create table inbox (
   b2b_order_number text,
   admin_bill_id text,
   created_at timestamptz default now(),
-  last_message_at timestamptz default now()
+  last_message_at timestamptz default now(),
+  -- "order ready" notices to Zeami (lib/readyOrders.ts; the functions are at the end of this file)
+  ready_notified_for timestamptz,  -- the last_message_at already announced; a later message makes it ready again
+  ready_notices int not null default 0,  -- times announced (the event id's round)
+  ready_claimed_at timestamptz,    -- a caller is announcing it now (free again after 2 minutes)
+  ready_claimed_for timestamptz    -- the last_message_at that caller is announcing
 );
+create index inbox_collecting_last_message on inbox (last_message_at) where status = 'collecting';
 
 create table inbox_messages (
   id serial primary key,
@@ -563,3 +569,45 @@ begin
     execute format('alter table %I enable row level security', t);
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------- "order ready" notices to Zeami
+-- The same two functions as supabase/add_zeami_notify.sql (see there). The every-minute job that calls
+-- /api/cron/order-ready is set up once with supabase/order_ready_cron.sql; re-running this file leaves it alone.
+create or replace function claim_ready_orders(p_quiet_seconds int default 90, p_max_age_seconds int default 86400,
+                                              p_limit int default 20)
+returns table (inbox_id int, round int)
+language sql
+set search_path = public
+as $$
+  update inbox i
+     set ready_claimed_at = now(), ready_claimed_for = i.last_message_at
+    from (select id from inbox
+           where status = 'collecting'
+             and last_message_at <= now() - make_interval(secs => p_quiet_seconds)
+             and last_message_at >  now() - make_interval(secs => p_max_age_seconds)
+             and (ready_notified_for is null or ready_notified_for < last_message_at)
+             and (ready_claimed_at is null or ready_claimed_at < now() - interval '2 minutes')
+           order by last_message_at
+           limit p_limit
+           for update skip locked) c
+   where i.id = c.id
+  returning i.id, i.ready_notices + 1;
+$$;
+
+create or replace function finish_ready_order(p_inbox_id int, p_round int, p_sent boolean)
+returns void
+language sql
+set search_path = public
+as $$
+  update inbox
+     set ready_notified_for = case when p_sent then ready_claimed_for else ready_notified_for end,
+         ready_notices      = case when p_sent then greatest(ready_notices, p_round) else ready_notices end,
+         ready_claimed_at   = null
+   where id = p_inbox_id;
+$$;
+
+revoke all on function claim_ready_orders(int, int, int) from public, anon, authenticated;
+revoke all on function finish_ready_order(int, int, boolean) from public, anon, authenticated;
+grant execute on function claim_ready_orders(int, int, int) to service_role;
+grant execute on function finish_ready_order(int, int, boolean) to service_role;
+notify pgrst, 'reload schema';

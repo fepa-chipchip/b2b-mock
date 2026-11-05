@@ -1,9 +1,15 @@
 import { NextResponse } from "next/server";
 import { db, must, normPhone, BUCKET } from "@/lib/db";
 import { send, tg, download, SAY } from "@/lib/tg";
-import { Signup, openSignup, saveSignup, askStep } from "@/lib/signup";
+import { Signup, openSignup, saveSignup, askStep, notifySignupCompleted } from "@/lib/signup";
+import { notifyReadyOrders } from "@/lib/readyOrders";
 
 export const dynamic = "force-dynamic";
+/**
+ * Room for the Zeami notices (5 s a try, one retry each) on top of the bot's own work when Zeami is slow: a function
+ * cut off at Vercel's default would answer Telegram with an error, and Telegram would send the same update again.
+ */
+export const maxDuration = 30;
 
 /** Messages a customer sends within this many minutes of the previous one belong to the same order. */
 const SAME_ORDER_MINUTES = 10;
@@ -30,6 +36,9 @@ export async function POST(req: Request) {
   } catch (e) {
     console.log("telegram update failed", (e as Error).message);
   }
+  // Vercel has no timer: besides the every-minute job (supabase/order_ready_cron.sql), each incoming message also
+  // tells Zeami about orders that went quiet since. After the reply to the customer; it never throws.
+  if (update.message) await notifyReadyOrders(5);
   return NextResponse.json({ ok: true });  // always 200, or Telegram re-sends the same update
 }
 
@@ -143,7 +152,9 @@ async function onSignupAnswer(chat: number, m: any, s: Signup) {
     next = { ...next, step: "done", status: "waiting_approval" };
   }
   await saveSignup(s.id, next);
-  return askStep(chat, { ...s, ...next } as Signup);
+  await askStep(chat, { ...s, ...next } as Signup);
+  // The last answer: the sign-up now waits for Simenesh. Zeami hears it after the customer has the bot's reply.
+  if (next.status === "waiting_approval") await notifySignupCompleted({ ...s, ...next } as Signup);
 }
 
 /** The business-type and "No TIN yet" buttons. Only the sign-up's own person, and only at that step. */

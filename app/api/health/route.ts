@@ -11,12 +11,16 @@ export async function GET() {
   const url = process.env.SUPABASE_URL || "";
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const present = Object.fromEntries(
-    ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "AGENT_TOKEN", "UI_PASSWORD"]
+    ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "AGENT_TOKEN", "UI_PASSWORD",
+     "ZEAMI_HOOK_URL", "CRON_SECRET"]
       .map((n) => [n, !!process.env[n]]));
+  const hook = (process.env.ZEAMI_HOOK_URL || "").trim();
   const checks: Record<string, unknown> = {
     url_shape: /^https:\/\/[a-z0-9]+\.supabase\.co$/.test(url) ? "ok" : "should be https://<ref>.supabase.co with nothing after",
     key_kind: key.startsWith("sb_secret_") ? "secret key" : key.startsWith("eyJ") ? "service_role (JWT)" : key ? "unknown kind" : "missing",
     bot_token_shape: /^\d+:[\w-]{30,}$/.test(process.env.TELEGRAM_BOT_TOKEN || "") ? "ok" : "check for spaces or a missing part",
+    // Optional: unset, the app tells Zeami nothing (lib/zeami.ts).
+    zeami_hook_shape: !hook ? "off (not set)" : /^https:\/\/[^/\s]+\/hooks\/[^/\s]+$/.test(hook) ? "ok" : "should be https://<zeami-host>/hooks/<token>",
   };
   if (url && key) {
     try {
