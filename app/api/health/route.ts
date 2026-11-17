@@ -12,7 +12,7 @@ export async function GET() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const present = Object.fromEntries(
     ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "AGENT_TOKEN", "UI_PASSWORD",
-     "ZEAMI_HOOK_URL", "CRON_SECRET"]
+     "ZEAMI_HOOK_URL", "CRON_SECRET", "ERP_MOCK_TOKENS", "ERP_MOCK_TOKEN"]
       .map((n) => [n, !!process.env[n]]));
   const hook = (process.env.ZEAMI_HOOK_URL || "").trim();
   const checks: Record<string, unknown> = {

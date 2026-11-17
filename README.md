@@ -200,6 +200,36 @@ Set up (once):
 Not sent again: a `signup_completed` whose two tries both failed (the agent still finds the sign-up in
 `GET /api/agent/signups`).
 
+## ERP payments mock
+
+A copy of ChipChip ERP's **external payment requests** call, so an agent that asks for payments can be tested without
+creating real payment requests. Same path, body, statuses and errors as the real
+`POST https://<erp-project>.supabase.co/functions/v1/external-payment-requests`; only the base URL and the token differ.
+
+- `POST /erp/functions/v1/external-payment-requests`, `Authorization: Bearer <mock token>`. Required: `title`,
+  `total_amount` (> 0). Optional fields and defaults as in the real API (`currency` ETB, `payment_method` bank_transfer,
+  `business_unit` chipchip, `documents` up to 10 as raw base64, `allocations`, ...). Answers: 201 created
+  (`status` approved or pending, number `PR-<year>-9xxxx`, the leading 9 marks a mock number), 200 `duplicate: true` with
+  the original request for a repeated `external_reference`, 400 invalid body, 401 token missing/invalid/revoked/expired,
+  405 any other method, 500. Errors are `{"success": false, "error": "..."}`. Like the real API there is no read call.
+- **Test switch:** an `external_reference` starting with `FAIL500-` creates the request and answers 500 (the real API's
+  "a 500 may or may not have created it"); the retry with the same reference answers 200 `duplicate: true`.
+- Documents: only name, type and size are kept, never the file. Vercel refuses request bodies over 4.5 MB, so keep test
+  files small (the real API may accept more).
+- Page **`/erp/requests`** (UI password, not in the menu): the requests newest first, with **Clear test requests**.
+- Code: `lib/erpPayments.ts` (the call), `lib/erpStore.ts`, tests in `tests/erp_payments.test.mjs`.
+
+Set up (once):
+1. Supabase → SQL Editor → run `supabase/erp_payment_requests.sql` (safe to re-run; `schema.sql` does not touch it).
+2. Vercel → Environment Variables (Production), see `.env.erp.example`: `ERP_MOCK_TOKENS`, a JSON list of
+   `{"token", "system_name", "auto_approve"}` (optional `revoked`, `expires_at`). `system_name` is saved as each request's
+   `external_source`; `auto_approve` true gives `approved`, false gives `pending`. Or one token: `ERP_MOCK_TOKEN`
+   (+ `ERP_MOCK_SOURCE`, default `zeami-test`, + `ERP_MOCK_AUTO_APPROVE`, default `true`). Make up long random strings:
+   these are the mock's own tokens, never the real ERP's. Redeploy.
+3. Zeami → register an API named **`chipchip-erp-payments (sandbox)`**: base URL `https://b2b-mock.vercel.app/erp/functions/v1`,
+   OpenAPI `https://b2b-mock.vercel.app/api/openapi/erp`, auth **Bearer** with one of the mock tokens. Going live later:
+   the real ERP's base URL (`https://<erp-project>.supabase.co/functions/v1`) and its token, nothing else.
+
 ## What is left out, and what differs from the real systems
 
 Left out (not needed for ordering): B2B Edit Order, Add Discount, Payment Evidence, Mark as Delivered, Cancel Order,

@@ -1,8 +1,9 @@
 import { NextResponse, NextRequest } from "next/server";
 
 /**
- * The pages ask for UI_PASSWORD (any user name). The bot's webhook, the agent's API and the two fake systems'
- * APIs (/b2b/auth, /b2b/rest, /admin-api) have their own checks, so they are left out here.
+ * The pages ask for UI_PASSWORD (any user name). The bot's webhook, the agent's API and the fake systems'
+ * APIs (/b2b/auth, /b2b/rest, /admin-api, /erp/functions) have their own checks, so they are left out here. The fake ERP's
+ * page /erp/requests is a page like the others and asks for the password.
  */
 export function middleware(req: NextRequest) {
   const want = process.env.UI_PASSWORD;
@@ -14,4 +15,4 @@ export function middleware(req: NextRequest) {
   return new NextResponse("Password needed", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="B2B orders test"' } });
 }
 
-export const config = { matcher: ["/((?!api/|admin-api/|b2b/auth/|b2b/rest/|_next/|favicon).*)"] };
+export const config = { matcher: ["/((?!api/|admin-api/|b2b/auth/|b2b/rest/|erp/functions/|_next/|favicon).*)"] };
