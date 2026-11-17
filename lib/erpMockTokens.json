@@ -1,0 +1,12 @@
+[
+  {
+    "sha256": "41ac9044e116f922eec76844eb0bacf890749c9eb130c28f9f53c3e9066bde77",
+    "system_name": "zeami-test",
+    "auto_approve": true
+  },
+  {
+    "sha256": "829407336d64b829748601337bad31afb671c44aea8b5dbee085d0a92d6faa03",
+    "system_name": "zeami-test-pending",
+    "auto_approve": false
+  }
+]

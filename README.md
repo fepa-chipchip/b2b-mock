@@ -217,15 +217,31 @@ creating real payment requests. Same path, body, statuses and errors as the real
 - Documents: only name, type and size are kept, never the file. Vercel refuses request bodies over 4.5 MB, so keep test
   files small (the real API may accept more).
 - Page **`/erp/requests`** (UI password, not in the menu): the requests newest first, with **Clear test requests**.
-- Code: `lib/erpPayments.ts` (the call), `lib/erpStore.ts`, tests in `tests/erp_payments.test.mjs`.
+- Code: `lib/erpPayments.ts` (the call), `lib/erpStore.ts`, `lib/erpMockTokens.json` (token hashes), tests in
+  `tests/erp_payments.test.mjs`.
+
+**Tokens: no Vercel variable needed.** The mock's test tokens live only in the git-ignored `.env.local` of whoever made
+them, as `ERP_MOCK_TOKENS=[{"token", "system_name", "auto_approve"}, ...]`. The repo carries only their hashes, in
+`lib/erpMockTokens.json`: a JSON list of `{"sha256", "system_name", "auto_approve"}` (optional `revoked`,
+`expires_at`), `sha256` = hex of the token's UTF-8 bytes. The mock hashes the presented token and compares it with every
+hash in constant time. `system_name` is saved as each request's `external_source`; `auto_approve` true gives `approved`,
+false gives `pending`. Two today: `zeami-test` (approved) and `zeami-test-pending` (pending).
+
+- **Rotate or add a token:** make a long random string, put it in your `.env.local`, then rewrite the hashes from it
+  (prints nothing secret):
+  ```
+  python -c "import json,hashlib;v=[l.split('=',1)[1].strip() for l in open('.env.local') if l.startswith('ERP_MOCK_TOKENS=')][0];open('lib/erpMockTokens.json','w',newline='\n').write(json.dumps([{'sha256':hashlib.sha256(t['token'].encode()).hexdigest(),'system_name':t['system_name'],'auto_approve':t.get('auto_approve',True)} for t in json.loads(v)],indent=2)+'\n')"
+  ```
+  Commit `lib/erpMockTokens.json` and push; the old token stops working with that deploy. To switch one off without
+  removing it, add `"revoked": true` to its entry.
+- Still read, before the hashes: the Vercel variables `ERP_MOCK_TOKENS` (same list with `token` in clear) or one
+  `ERP_MOCK_TOKEN` (+ `ERP_MOCK_SOURCE`, default `zeami-test`, + `ERP_MOCK_AUTO_APPROVE`, default `true`), see
+  `.env.erp.example`. Optional; nothing needs them today.
+- These are the mock's own tokens, never the real ERP's. `GET /api/health` shows `erp_mock_committed_tokens` (a count).
 
 Set up (once):
 1. Supabase → SQL Editor → run `supabase/erp_payment_requests.sql` (safe to re-run; `schema.sql` does not touch it).
-2. Vercel → Environment Variables (Production), see `.env.erp.example`: `ERP_MOCK_TOKENS`, a JSON list of
-   `{"token", "system_name", "auto_approve"}` (optional `revoked`, `expires_at`). `system_name` is saved as each request's
-   `external_source`; `auto_approve` true gives `approved`, false gives `pending`. Or one token: `ERP_MOCK_TOKEN`
-   (+ `ERP_MOCK_SOURCE`, default `zeami-test`, + `ERP_MOCK_AUTO_APPROVE`, default `true`). Make up long random strings:
-   these are the mock's own tokens, never the real ERP's. Redeploy.
+2. Tokens: nothing to do on Vercel, see above.
 3. Zeami → register an API named **`chipchip-erp-payments (sandbox)`**: base URL `https://b2b-mock.vercel.app/erp/functions/v1`,
    OpenAPI `https://b2b-mock.vercel.app/api/openapi/erp`, auth **Bearer** with one of the mock tokens. Going live later:
    the real ERP's base URL (`https://<erp-project>.supabase.co/functions/v1`) and its token, nothing else.

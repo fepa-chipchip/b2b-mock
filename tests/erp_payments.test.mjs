@@ -4,8 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { PGlite } from "@electric-sql/pglite";
-import { handleExternalPaymentRequest, loadTokens, base64Size } from "../lib/erpPayments.ts";
+import { handleExternalPaymentRequest, loadTokens, loadHashedTokens, allTokens, base64Size } from "../lib/erpPayments.ts";
 import { erpSpec } from "../lib/openapi.ts";
 
 const SQL = readFileSync(new URL("../supabase/erp_payment_requests.sql", import.meta.url), "utf8").replace(/\r\n/g, "\n");
@@ -159,6 +160,62 @@ test("fallback env: ERP_MOCK_TOKEN + ERP_MOCK_SOURCE + ERP_MOCK_AUTO_APPROVE", (
     [{ token: "a", system_name: "s", auto_approve: false }]);
   assert.deepEqual(loadTokens({}), []);
   assert.throws(() => loadTokens({ ERP_MOCK_TOKENS: "not json" }), /not valid JSON/);
+});
+
+// The committed form (lib/erpMockTokens.json): only sha256 hashes, the tokens stay in the user's .env.local.
+const sha = (t) => createHash("sha256").update(t, "utf8").digest("hex");
+const HASHED = [
+  { sha256: sha("hash-auto"), system_name: "zeami-hashed", auto_approve: true },
+  { sha256: sha("hash-pending").toUpperCase(), system_name: "zeami-hashed-pending", auto_approve: false },
+  { sha256: sha("hash-revoked"), system_name: "zeami-hashed", auto_approve: true, revoked: true },
+  { sha256: sha("hash-expired"), system_name: "zeami-hashed", auto_approve: true, expires_at: "2026-01-01T00:00:00Z" },
+];
+
+test("committed hashes: a listed token is accepted with its System Name and approval; wrong, revoked, expired are 401", async () => {
+  const { call, rows } = await setup(allTokens({}, HASHED));
+  const a = await call({ ...MIN, external_reference: "h-1" }, { token: "hash-auto" });
+  assert.equal(a.status, 201);
+  assert.equal(a.body.status, "approved");
+  assert.match(a.body.request_number, /^PR-\d{4}-9\d{4}$/);
+  const p = await call({ ...MIN, external_reference: "h-2" }, { token: "hash-pending" });
+  assert.equal(p.status, 201);
+  assert.equal(p.body.status, "pending");
+  assert.deepEqual((await rows()).map((r) => r.external_source), ["zeami-hashed", "zeami-hashed-pending"]);
+  for (const [token, error] of [["hash-wrong", "Invalid API token"], [sha("hash-auto"), "Invalid API token"],
+    ["hash-revoked", "API token has been revoked"], ["hash-expired", "API token has expired"]]) {
+    const r = await call(MIN, { token });
+    assert.equal(r.status, 401, token);
+    assert.deepEqual(r.body, { success: false, error });
+  }
+  assert.equal((await rows()).length, 2);
+});
+
+test("committed hashes sit beside the Vercel variables; a malformed list is a 500 that names no token", async () => {
+  const both = allTokens({ ERP_MOCK_TOKEN: "env-tok" }, HASHED.slice(0, 1));
+  assert.deepEqual(both.map((t) => t.system_name), ["zeami-test", "zeami-hashed"]);
+  const { call } = await setup(both);
+  assert.equal((await call({ ...MIN, external_reference: "e-1" }, { token: "env-tok" })).status, 201);
+  assert.equal((await call({ ...MIN, external_reference: "e-2" }, { token: "hash-auto" })).status, 201);
+  assert.deepEqual(allTokens({}, undefined), []);
+  assert.throws(() => loadHashedTokens({}), /must be a JSON list/);
+  assert.throws(() => loadHashedTokens([{ sha256: "abc", system_name: "x" }]), /needs a sha256/);
+  assert.throws(() => loadHashedTokens([{ sha256: sha("x"), token: "x" }]), /never the token/);
+  const logs = [];
+  const res = await handleExternalPaymentRequest(
+    new Request(URL_, { method: "POST", headers: { authorization: "Bearer x" }, body: JSON.stringify(MIN) }),
+    { store: pgStore(null), tokens: () => allTokens({}, [{ sha256: "nope" }]), log: (l) => logs.push(l) });
+  assert.equal(res.status, 500);
+  assert.deepEqual(logs, ["erp mock: lib/erpMockTokens.json[0] needs a sha256 (64 hex characters)"]);
+});
+
+test("the committed lib/erpMockTokens.json holds only hashes and loads", () => {
+  const file = JSON.parse(readFileSync(new URL("../lib/erpMockTokens.json", import.meta.url), "utf8"));
+  const tokens = loadHashedTokens(file);
+  assert.ok(tokens.length > 0);
+  for (const t of tokens) {
+    assert.equal(t.token, undefined);
+    assert.match(t.sha256, /^[0-9a-f]{64}$/);
+  }
 });
 
 test("no token configured: every call is 401; a broken ERP_MOCK_TOKENS is a 500 that names no token", async () => {

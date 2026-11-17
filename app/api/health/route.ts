@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import committedTokens from "@/lib/erpMockTokens.json";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,8 @@ export async function GET() {
     bot_token_shape: /^\d+:[\w-]{30,}$/.test(process.env.TELEGRAM_BOT_TOKEN || "") ? "ok" : "check for spaces or a missing part",
     // Optional: unset, the app tells Zeami nothing (lib/zeami.ts).
     zeami_hook_shape: !hook ? "off (not set)" : /^https:\/\/[^/\s]+\/hooks\/[^/\s]+$/.test(hook) ? "ok" : "should be https://<zeami-host>/hooks/<token>",
+    // The ERP mock's committed token hashes (lib/erpMockTokens.json); the count only, never a hash.
+    erp_mock_committed_tokens: Array.isArray(committedTokens) ? committedTokens.length : 0,
   };
   if (url && key) {
     try {

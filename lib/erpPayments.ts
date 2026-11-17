@@ -13,6 +13,9 @@
  * Test switch, mock only: an external_reference starting with "FAIL500-" creates the request AND answers 500, as the
  * real API may after it has written the row. A retry with the same reference then answers 200 duplicate.
  *
+ * Tokens: from the Vercel variables ERP_MOCK_TOKENS / ERP_MOCK_TOKEN, and from lib/erpMockTokens.json, a committed list
+ * of sha256 hashes (the tokens themselves stay in the user's .env.local), so the mock works with no Vercel variable.
+ *
  * Documents: only file_name, file_type and the decoded size are kept; the base64 itself is never stored.
  *
  * No `@/` imports on purpose: tests/erp_payments.test.mjs loads this file straight into Node.
@@ -20,7 +23,10 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 export type ErpToken = {
-  token: string;
+  /** The token itself (ERP_MOCK_TOKENS / ERP_MOCK_TOKEN), or ... */
+  token?: string;
+  /** ... only its sha256, hex of its UTF-8 bytes (the committed lib/erpMockTokens.json, so the token is never in git). */
+  sha256?: string;
   system_name: string;
   auto_approve: boolean;
   /** Mock only, to test the 401s: a revoked token, or one past its expiry (ISO date or timestamp). */
@@ -122,13 +128,48 @@ export function loadTokens(env: Record<string, string | undefined> = process.env
   }];
 }
 
-const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
+/**
+ * The committed tokens (lib/erpMockTokens.json): a JSON list of {sha256, system_name, auto_approve, revoked?, expires_at?},
+ * sha256 = hex of the token's UTF-8 bytes. Rotating a token = replacing its hash. Throws when the list is malformed
+ * (the route then answers 500 and says why in the log).
+ */
+export function loadHashedTokens(list: unknown, name = "lib/erpMockTokens.json"): ErpToken[] {
+  if (list === undefined || list === null) return [];
+  if (!Array.isArray(list)) throw new Error(`${name} must be a JSON list`);
+  return list.map((t, i) => {
+    const o = (t && typeof t === "object" ? t : {}) as Record<string, unknown>;
+    const h = typeof o.sha256 === "string" ? o.sha256.trim().toLowerCase() : "";
+    if (!/^[0-9a-f]{64}$/.test(h)) throw new Error(`${name}[${i}] needs a sha256 (64 hex characters)`);
+    if ("token" in o) throw new Error(`${name}[${i}] must hold only the hash, never the token`);
+    return {
+      sha256: h,
+      system_name: String(o.system_name || DEFAULT_SOURCE),
+      auto_approve: truthy(o.auto_approve, true),
+      ...(o.revoked !== undefined ? { revoked: truthy(o.revoked, false) } : {}),
+      ...(o.expires_at ? { expires_at: String(o.expires_at) } : {}),
+    };
+  });
+}
 
-/** Constant-time: every token is compared (as equal-length sha256 digests), whichever matches. */
+/** Every token the mock accepts: the Vercel variables first (as before), then the committed hashes. */
+export function allTokens(env: Record<string, string | undefined> = process.env, committed?: unknown): ErpToken[] {
+  return [...loadTokens(env), ...loadHashedTokens(committed)];
+}
+
+const digest = (s: string) => createHash("sha256").update(s, "utf8").digest();
+const expected = (t: ErpToken) => (t.sha256 ? Buffer.from(t.sha256, "hex") : digest(t.token || ""));
+
+/**
+ * Constant-time: the presented token's sha256 is compared with every token's (equal-length digests), whichever matches.
+ * A committed entry is only its hash, so it is compared as is.
+ */
 export function findToken(got: string, tokens: ErpToken[]): ErpToken | null {
   const g = digest(got);
   let found: ErpToken | null = null;
-  for (const t of tokens) if (timingSafeEqual(g, digest(t.token)) && !found) found = t;
+  for (const t of tokens) {
+    const want = expected(t);
+    if (want.length === g.length && timingSafeEqual(g, want) && !found) found = t;
+  }
   return found;
 }
 
