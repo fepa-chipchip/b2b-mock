@@ -202,22 +202,41 @@ Not sent again: a `signup_completed` whose two tries both failed (the agent stil
 
 ## ERP payments mock
 
-A copy of ChipChip ERP's **external payment requests** call, so an agent that asks for payments can be tested without
-creating real payment requests. Same path, body, statuses and errors as the real
-`POST https://<erp-project>.supabase.co/functions/v1/external-payment-requests`; only the base URL and the token differ.
+A copy of ChipChip ERP's **external payment requests** API (Amir's guide v2), so an agent that creates, reviews and
+settles payments can be tested without touching real ones. Same path, bodies, statuses and errors as the real
+`https://<erp-project>.supabase.co/functions/v1/external-payment-requests`; only the base URL and the token differ.
+One path, `Authorization: Bearer <mock token>` on every call; the same token creates, reads and marks paid, any request.
 
-- `POST /erp/functions/v1/external-payment-requests`, `Authorization: Bearer <mock token>`. Required: `title`,
-  `total_amount` (> 0). Optional fields and defaults as in the real API (`currency` ETB, `payment_method` bank_transfer,
-  `business_unit` chipchip, `documents` up to 10 as raw base64, `allocations`, ...). Answers: 201 created
-  (`status` approved or pending, number `PR-<year>-9xxxx`, the leading 9 marks a mock number), 200 `duplicate: true` with
-  the original request for a repeated `external_reference`, 400 invalid body, 401 token missing/invalid/revoked/expired,
-  405 any other method, 500. Errors are `{"success": false, "error": "..."}`. Like the real API there is no read call.
-- **Test switch:** an `external_reference` starting with `FAIL500-` creates the request and answers 500 (the real API's
-  "a 500 may or may not have created it"); the retry with the same reference answers 200 `duplicate: true`.
+- **Create**, `POST` without `action`. Required: `title`, `total_amount` (> 0). Optional fields and defaults as in the
+  real API (`currency` ETB, `payment_method` bank_transfer, `business_unit` chipchip, `items`, `documents` up to 10 as
+  raw base64, `allocations`, ...). Answers 200 `{success, request_id, request_number, status, external_source,
+  external_reference, documents_uploaded, message}` (`status` approved or pending, number `PR-<year>-9xxxx`, the leading
+  9 marks a mock number), 200 `duplicate: true` with the original request for a repeated `external_reference`.
+- **List**, `GET ?status=&from=&to=&limit=&offset=`: `{success, total, limit, offset, requests}`, newest first.
+  `status` pending (covers pending_approval, pending, submitted) / approved / paid / rejected; `from` / `to` YYYY-MM-DD on
+  the creation date (UTC), both inclusive; `limit` 1-500 (default 100) and `offset` are clamped, never refused.
+- **Get one**, `GET ?request_number=PR-...`: `{success, request, approvals, history}`; 404 if unknown.
+- **Mark paid**, `POST {"action": "mark_paid", "request_number", "payment_reference", "payment_date"?,
+  "bank_account_id"?}`: 200 `{success, request_number, status: "paid", payment_reference, payment_date,
+  expense_number}` (`EXP-<year>-9xxxx`); again on a paid request: 200 `already_paid: true` with the first payment's
+  details; 409 unless the request is approved; 404 unknown number.
+- Errors are `{"success": false, "error": "..."}`: 400 invalid body or query (bad status filter, bad date, ...), 401 token
+  missing/invalid/revoked/expired, 404, 405 any method but GET and POST, 409, 500.
+- **Approval chain:** a request from a token without auto-approve stays `pending` until someone presses **Approve** or
+  **Reject** (with a comment) on `/erp/requests`; that fills `approvals` and `history` like the ERP's approvers would.
+- **Test switches:** an `external_reference` starting with `FAIL500-` creates the request and answers 500 (the real API's
+  "a 500 may or may not have created it"); the retry with the same reference answers 200 `duplicate: true`. A mark_paid
+  `payment_reference` starting with `FAIL500-` marks it paid and answers 500; the retry answers 200 `already_paid`.
 - Documents: only name, type and size are kept, never the file. Vercel refuses request bodies over 4.5 MB, so keep test
   files small (the real API may accept more).
-- Page **`/erp/requests`** (UI password, not in the menu): the requests newest first, with **Clear test requests**.
-- Code: `lib/erpPayments.ts` (the call), `lib/erpStore.ts`, `lib/erpMockTokens.json` (token hashes), tests in
+- Page **`/erp/requests`** (UI password, not in the menu): the requests newest first with their approval / payment
+  state, Approve / Reject for pending ones, **Clear test requests**, and under each request every field of the ERP's
+  payment form (requester, department and category by name, purpose, vendor and bank, line items, allocations, VAT,
+  payment method and date, document names). A category that is not in the sent department is accepted, as the API
+  would, and flagged "category not in department".
+- Departments and categories: `lib/erpDepartments.json` (15 departments, 100 categories with ids and codes, read from the
+  ERP staging payment form; SOURCING and its two categories match the guide). Display only: the API accepts any uuid.
+- Code: `lib/erpPayments.ts` (the API), `lib/erpStore.ts`, `lib/erpMockTokens.json` (token hashes), tests in
   `tests/erp_payments.test.mjs`.
 
 **Tokens: no Vercel variable needed.** The mock's test tokens live only in the git-ignored `.env.local` of whoever made
@@ -241,9 +260,12 @@ false gives `pending`. Two today: `zeami-test` (approved) and `zeami-test-pendin
 
 Set up (once):
 1. Supabase → SQL Editor → run `supabase/erp_payment_requests.sql` (safe to re-run; `schema.sql` does not touch it).
+   Run it again **before** deploying v2: it adds the v2 columns and functions to the existing table and keeps its
+   requests. Without it, create answers 500 (no `items` column) and list / get one / mark paid answer 500.
 2. Tokens: nothing to do on Vercel, see above.
 3. Zeami → register an API named **`chipchip-erp-payments (sandbox)`**: base URL `https://b2b-mock.vercel.app/erp/functions/v1`,
-   OpenAPI `https://b2b-mock.vercel.app/api/openapi/erp`, auth **Bearer** with one of the mock tokens. Going live later:
+   OpenAPI `https://b2b-mock.vercel.app/api/openapi/erp`, auth **Bearer** with one of the mock tokens. After v2, re-import
+   the OpenAPI so the registry has the GET and the mark_paid body fields. Going live later:
    the real ERP's base URL (`https://<erp-project>.supabase.co/functions/v1`) and its token, nothing else.
 
 ## What is left out, and what differs from the real systems
